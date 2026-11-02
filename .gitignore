@@ -31,3 +31,6 @@ crashlytics-build.gradle
 # Giữ .meta, bỏ asset tự sinh
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
 /[Aa]ssets/[Ss]treamingAssets/aa/*
+
+# Claude Code local settings
+.claude/settings.local.json
