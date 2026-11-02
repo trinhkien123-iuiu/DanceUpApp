@@ -936,14 +936,14 @@ MonoBehaviour:
     icon: {fileID: 4194367012264335605}
     label: {fileID: 2238941387306988822}
     activeDot: {fileID: 2810971937692619980}
-    activeIcon: {fileID: 0}
+    activeIcon: {fileID: 21300000, guid: ab0152b56ce795146ba8de0321118cb0, type: 3}
     inactiveIcon: {fileID: 21300000, guid: 98cc53c58e7642f48bbc4b0bf7a19e20, type: 3}
   - tab: 3
     button: {fileID: 3949135146489067611}
     icon: {fileID: 6554312872769000869}
     label: {fileID: 8205200369160156781}
     activeDot: {fileID: 2863195460584695633}
-    activeIcon: {fileID: 0}
+    activeIcon: {fileID: 21300000, guid: 5689be7fb85e0d94ebf74a66f2020459, type: 3}
     inactiveIcon: {fileID: 21300000, guid: d4c6057497139144dbff888dd39521d3, type: 3}
   cameraButton: {fileID: 3489974072547111695}
   activeColor: {r: 0, g: 0.706, b: 1, a: 1}
