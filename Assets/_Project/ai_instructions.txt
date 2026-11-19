@@ -1,0 +1,4 @@
+- Tôi đang phát triển ứng dụng điện thoại trên Unity 2D.
+- Luôn ưu tiên sử dụng Input System mới (hoặc Input Manager cũ) tùy bạn chọn.
+- Khi tạo Script mới, bắt buộc phải kế thừa từ MonoBehaviour và tự động thêm các Component phụ thuộc bằng [RequireComponent].
+- Sau khi viết code, hãy tự động kích hoạt tính năng kiểm tra lỗi (compile check) qua Unity MCP.

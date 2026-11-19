@@ -34,3 +34,9 @@ crashlytics-build.gradle
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.bak
+*.bak.meta

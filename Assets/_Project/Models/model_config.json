@@ -1,0 +1,68 @@
+{
+  "model_file": "joint_classifier.onnx",
+  "version": "1.0",
+  "description": "CatBoost joint pass/fail classifier (processing_11 pipeline)",
+  "features": [
+    "Joint_Error",
+    "Joint_Cosine",
+    "Velocity_Error"
+  ],
+  "feature_descriptions": {
+    "Joint_Error": "Euclidean distance between student and teacher normalized joint positions (torso-relative)",
+    "Joint_Cosine": "Cosine similarity between student and teacher position vectors",
+    "Velocity_Error": "Euclidean distance between student and teacher velocity vectors (frame-to-frame delta)"
+  },
+  "model_input": {
+    "name": "features",
+    "shape": [
+      "N",
+      3
+    ],
+    "dtype": "float32",
+    "note": "Rows correspond to joints evaluated at current frame. Features: [Joint_Error, Joint_Cosine, Velocity_Error]"
+  },
+  "model_output": {
+    "label_name": "label",
+    "label_shape": [
+      "N"
+    ],
+    "dtype": "int64",
+    "note": "0 = Fail (incorrect joint), 1 = Pass (correct joint)"
+  },
+  "frame_scoring": {
+    "joint_weights": {
+      "nose": 1.0,
+      "left_shoulder": 1.0,
+      "right_shoulder": 1.0,
+      "left_elbow": 1.0,
+      "right_elbow": 1.0,
+      "left_wrist": 1.0,
+      "right_wrist": 1.0,
+      "left_hip": 1.0,
+      "right_hip": 1.0,
+      "left_knee": 1.0,
+      "right_knee": 1.0,
+      "left_ankle": 1.0,
+      "right_ankle": 1.0
+    },
+    "max_score_per_frame": 13.0,
+    "pass_threshold": 7.1,
+    "note": "frame_score = sum of Predicted_Pass * weight. frame_pass = (frame_score >= 7.1)"
+  },
+  "fps": 30.0,
+  "joints": [
+    "nose",
+    "left_shoulder",
+    "right_shoulder",
+    "left_elbow",
+    "right_elbow",
+    "left_wrist",
+    "right_wrist",
+    "left_hip",
+    "right_hip",
+    "left_knee",
+    "right_knee",
+    "left_ankle",
+    "right_ankle"
+  ]
+}
