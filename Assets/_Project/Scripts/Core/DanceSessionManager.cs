@@ -462,35 +462,35 @@ namespace DanceUp.Core
             int totalFrames = Mathf.Max(1, frames.Count);
 
             // 1. Vào nhịp (Timing)
-            float timingScore = Mathf.Clamp(data.frameByFrameAccuracy * 0.95f + 4f, 50f, 98f);
+            float timingScore = Mathf.Clamp(data.frameByFrameAccuracy * 0.95f + 4f, 5f, 98f);
 
             // 2. Cảm nhịp (Rhythm)
-            float rhythmScore = Mathf.Clamp((data.dtwAccuracy > 0 ? data.dtwAccuracy : baseAcc) * 1.02f, 50f, 99f);
+            float rhythmScore = Mathf.Clamp((data.dtwAccuracy > 0 ? data.dtwAccuracy : baseAcc) * 1.02f, 5f, 99f);
 
             // 3. Tay (Arms)
             int armErrors = GetErrorCount(errorCounts, "left_wrist") + GetErrorCount(errorCounts, "right_wrist") +
                             GetErrorCount(errorCounts, "left_elbow") + GetErrorCount(errorCounts, "right_elbow") +
                             GetErrorCount(errorCounts, "left_shoulder") + GetErrorCount(errorCounts, "right_shoulder");
-            float armAcc = Mathf.Clamp(100f - ((float)armErrors / (totalFrames * 6f)) * 100f, 40f, 98f);
+            float armAcc = Mathf.Clamp(100f - ((float)armErrors / (totalFrames * 6f)) * 100f, 5f, 98f);
 
             // 4. Chân (Legs)
             int legErrors = GetErrorCount(errorCounts, "left_knee") + GetErrorCount(errorCounts, "right_knee") +
                             GetErrorCount(errorCounts, "left_ankle") + GetErrorCount(errorCounts, "right_ankle") +
                             GetErrorCount(errorCounts, "left_hip") + GetErrorCount(errorCounts, "right_hip");
-            float legAcc = Mathf.Clamp(100f - ((float)legErrors / (totalFrames * 6f)) * 100f, 40f, 98f);
+            float legAcc = Mathf.Clamp(100f - ((float)legErrors / (totalFrames * 6f)) * 100f, 5f, 98f);
 
             // 5. Tư thế (Posture)
             int postureErrors = GetErrorCount(errorCounts, "left_shoulder") + GetErrorCount(errorCounts, "right_shoulder") +
                                 GetErrorCount(errorCounts, "left_hip") + GetErrorCount(errorCounts, "right_hip");
-            float postureAcc = Mathf.Clamp(100f - ((float)postureErrors / (totalFrames * 4f)) * 100f, 50f, 99f);
+            float postureAcc = Mathf.Clamp(100f - ((float)postureErrors / (totalFrames * 4f)) * 100f, 5f, 99f);
 
             // 6. Thăng bằng (Balance)
             int balanceErrors = GetErrorCount(errorCounts, "left_hip") + GetErrorCount(errorCounts, "right_hip") +
                                 GetErrorCount(errorCounts, "left_knee") + GetErrorCount(errorCounts, "right_knee");
-            float balanceAcc = Mathf.Clamp(100f - ((float)balanceErrors / (totalFrames * 4f)) * 100f, 40f, 95f);
+            float balanceAcc = Mathf.Clamp(100f - ((float)balanceErrors / (totalFrames * 4f)) * 100f, 5f, 95f);
 
             // 7. Năng lượng (Energy)
-            float energyScore = Mathf.Clamp(baseAcc * 0.96f + 3f, 50f, 96f);
+            float energyScore = Mathf.Clamp(baseAcc * 0.96f + 3f, 5f, 96f);
 
             data.skillScores["Vào nhịp"] = Mathf.Round(timingScore);
             data.skillScores["Cảm nhịp"] = Mathf.Round(rhythmScore);

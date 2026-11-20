@@ -15,7 +15,7 @@ namespace DanceUp.Features.ImportEvaluation
 {
     /// <summary>
     /// Dịch vụ phân tích video vũ đạo ngoại tuyến (Offline Video Evaluation) và Xuất video gắn khung xương.
-    /// Tích hợp MediaPipe Python Pose Extractor, DTW Scorer và DanceMLPipeline.
+    /// Tích hợp MediaPipe Python Pose Extractor, DTW Scorer và DanceMLPipeline (CatBoost).
     /// </summary>
     public class VideoAnalysisService : MonoBehaviour
     {
@@ -31,7 +31,7 @@ namespace DanceUp.Features.ImportEvaluation
                     {
                         var go = new GameObject("VideoAnalysisService");
                         instance = go.AddComponent<VideoAnalysisService>();
-                        DontDestroyOnLoad(go);
+                        if (Application.isPlaying) DontDestroyOnLoad(go);
                     }
                 }
                 return instance;
@@ -48,6 +48,29 @@ namespace DanceUp.Features.ImportEvaluation
             mlPipeline = GetComponent<DanceMLPipeline>();
             if (mlPipeline == null) mlPipeline = gameObject.AddComponent<DanceMLPipeline>();
             mlPipeline.InitModel();
+        }
+
+        private string ResolvePythonExecutable()
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string[] candidatePaths = new string[]
+            {
+                Path.Combine(localAppData, @"Programs\Python\Python313\python.exe"),
+                Path.Combine(localAppData, @"Programs\Python\Python312\python.exe"),
+                Path.Combine(localAppData, @"Programs\Python\Python311\python.exe"),
+                Path.Combine(localAppData, @"Programs\Python\Python310\python.exe"),
+                @"C:\Python313\python.exe",
+                @"C:\Python312\python.exe",
+                @"C:\Python311\python.exe",
+                @"C:\Python310\python.exe"
+            };
+
+            foreach (var p in candidatePaths)
+            {
+                if (File.Exists(p)) return p;
+            }
+
+            return "python";
         }
 
         /// <summary>
@@ -90,6 +113,7 @@ namespace DanceUp.Features.ImportEvaluation
             float pythonProgress = 0f;
             string pythonError = "";
             bool isDone = false;
+            string pyExe = ResolvePythonExecutable();
 
             // Chạy Python pose_extractor.py trong Background Thread
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -98,8 +122,8 @@ namespace DanceUp.Features.ImportEvaluation
                 {
                     var psi = new ProcessStartInfo
                     {
-                        FileName = "python",
-                        Arguments = $"\"{scriptPath}\" --mode analyze_video --video \"{videoPath}\" --output-json \"{tempJson}\"",
+                        FileName = pyExe,
+                        Arguments = $"-u \"{scriptPath}\" --mode analyze_video --video \"{videoPath}\" --output-json \"{tempJson}\"",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
@@ -131,7 +155,7 @@ namespace DanceUp.Features.ImportEvaluation
 
                         process.ErrorDataReceived += (s, e) =>
                         {
-                            if (!string.IsNullOrEmpty(e.Data))
+                            if (!string.IsNullOrEmpty(e.Data) && !e.Data.Contains("W0000") && !e.Data.Contains("oneDNN"))
                             {
                                 pythonError += e.Data + "\n";
                             }
@@ -168,124 +192,422 @@ namespace DanceUp.Features.ImportEvaluation
                 yield return new WaitForSeconds(0.1f);
             }
 
-            onProgress?.Invoke(0.70f, "Căn chỉnh chuỗi động tác bằng thuật toán DTW...");
-            yield return new WaitForSeconds(0.2f);
-
-            // Xử lý dữ liệu frames trích xuất
-            List<FrameEvaluationResult> frameResults = null;
-            float sessionDuration = 30f;
-
-            if (pythonSuccess && File.Exists(tempJson))
+            if (!pythonSuccess || !File.Exists(tempJson))
             {
-                frameResults = ParseAnalyzedJson(tempJson, out sessionDuration);
+                Debug.LogError("[VideoAnalysisService] Phân tích MediaPipe thất bại: " + pythonError);
+                onError?.Invoke("Không thể trích xuất khớp từ video: " + pythonError);
+                yield break;
             }
 
-            // Fallback an toàn nếu Python không chạy được trên môi trường người dùng
-            if (frameResults == null || frameResults.Count == 0)
+            onProgress?.Invoke(0.70f, "Đang nạp dữ liệu động tác mẫu của giáo viên...");
+            yield return new WaitForSeconds(0.15f);
+
+            // 1. Nạp dữ liệu mẫu của giáo viên (Reference Teacher Poses)
+            float teacherDuration;
+            var teacherFrames = LoadTeacherReferenceData(referenceClip, out teacherDuration);
+            if (teacherFrames == null || teacherFrames.Count == 0)
             {
-                Debug.LogWarning("[VideoAnalysisService] Python analysis error: " + pythonError + ". Kích hoạt bộ nạp mẫu demo đảm bảo trải nghiệm!");
-                frameResults = LoadFallbackFrames(out sessionDuration);
+                onError?.Invoke("Không tìm thấy dữ liệu động tác mẫu của giáo viên!");
+                yield break;
             }
 
-            onProgress?.Invoke(0.85f, "Đang đánh giá sai số từng khớp & 7 kỹ năng vũ đạo...");
+            // 2. Phân tích JSON khớp của học viên từ video thực tế
+            onProgress?.Invoke(0.75f, "Đọc tọa độ khớp thực tế của bài nhảy...");
+            yield return null;
+
+            float sessionDuration, fps;
+            var studentFrames = ParseStudentPoseJson(tempJson, out sessionDuration, out fps);
+            if (studentFrames == null || studentFrames.Count == 0)
+            {
+                onError?.Invoke("Không phát hiện chuyển động cơ thể trong video đã chọn!");
+                yield break;
+            }
+
+            onProgress?.Invoke(0.85f, "Chấm điểm từng khung hình qua mô hình ML CatBoost...");
             yield return new WaitForSeconds(0.2f);
 
-            // 1. Chấm điểm ML Pipeline cho từng frame
-            EvaluateFramesWithML(frameResults);
-
-            // 2. Chạy thuật toán DTW và trích xuất Warping Path & Sai lệch nhịp
-            var (dtwAcc, deviations, avgDrift) = DtwScorer.ComputeWithDeviations(frameResults, 30f);
-
-            // 3. Tổng hợp dữ liệu SessionEvaluationData
-            var sessionData = new SessionEvaluationData
+            // 3. Đánh giá từng khung hình qua DanceMLPipeline
+            if (mlPipeline == null)
             {
-                lessonTitle = string.IsNullOrEmpty(lessonTitle) ? "HIP HOP BASIC • ARM GROOVE" : lessonTitle,
-                sessionDuration = sessionDuration,
-                analyzedVideoPath = videoPath,
-                isImportedVideo = true,
-                dtwAccuracy = dtwAcc,
-                dtwDeviations = deviations,
-                dtwTimeDriftSeconds = avgDrift,
-                frameResults = frameResults
-            };
+                mlPipeline = gameObject.AddComponent<DanceMLPipeline>();
+                mlPipeline.InitModel();
+            }
+            mlPipeline.InitModel();
 
-            // Tính toán độ chính xác frame-by-frame
+            var frameResults = new List<FrameEvaluationResult>();
             int passCount = 0;
             var errorCounts = new Dictionary<string, int>();
 
-            foreach (var fr in frameResults)
+            for (int i = 0; i < studentFrames.Count; i++)
             {
-                if (fr.isPass) passCount++;
-                foreach (var kvp in fr.joints)
+                var sf = studentFrames[i];
+                float t = sf.timestamp;
+
+                // Ánh xạ tương đối tới khung hình giáo viên theo tiến độ bài nhảy
+                float tRatio = (sessionDuration > 0f) ? (t / sessionDuration) : ((float)i / studentFrames.Count);
+                int tIdx = Mathf.Clamp(Mathf.RoundToInt(tRatio * (teacherFrames.Count - 1)), 0, teacherFrames.Count - 1);
+                var teacherJoints = teacherFrames[tIdx];
+
+                FrameEvaluationResult fr;
+                if (!sf.poseDetected || sf.joints == null || sf.joints.Count < 6)
                 {
-                    if (kvp.Value.isPass == 0)
+                    // Khung hình không phát hiện được người / người ra ngoài camera
+                    fr = new FrameEvaluationResult
                     {
-                        if (!errorCounts.ContainsKey(kvp.Key)) errorCounts[kvp.Key] = 0;
-                        errorCounts[kvp.Key]++;
+                        frameIndex = i,
+                        timestamp = t,
+                        maxScore = 13.0f,
+                        frameScore = 0f,
+                        isPass = false
+                    };
+                    foreach (var j in DanceMLPipeline.JOINTS)
+                    {
+                        fr.joints[j] = new JointScoreItem
+                        {
+                            jointName = j,
+                            studentPos = Vector2.zero,
+                            teacherPos = teacherJoints.ContainsKey(j) ? teacherJoints[j] : Vector2.zero,
+                            isPass = 0,
+                            jointError = 1.0f
+                        };
+                        if (!errorCounts.ContainsKey(j)) errorCounts[j] = 0;
+                        errorCounts[j]++;
                     }
                 }
+                else
+                {
+                    // Chấm điểm thực tế qua DanceMLPipeline (chuẩn hóa hình học & CatBoost classifier)
+                    fr = mlPipeline.EvaluateFrame(i, t, sf.joints, teacherJoints);
+                    if (fr.isPass) passCount++;
+
+                    foreach (var kvp in fr.joints)
+                    {
+                        if (kvp.Value.isPass == 0)
+                        {
+                            if (!errorCounts.ContainsKey(kvp.Key)) errorCounts[kvp.Key] = 0;
+                            errorCounts[kvp.Key]++;
+                        }
+                    }
+                }
+
+                frameResults.Add(fr);
             }
 
-            float frameAcc = (frameResults.Count > 0) ? ((float)passCount / frameResults.Count * 100f) : 84f;
-            sessionData.frameByFrameAccuracy = frameAcc;
-            sessionData.overallAccuracy = Mathf.Clamp(Mathf.Round(frameAcc * 0.45f + dtwAcc * 0.55f), 50f, 98f);
-            sessionData.totalMovementsEvaluated = Mathf.Max(8, Mathf.RoundToInt(sessionDuration / 2.5f));
-            sessionData.xpEarned = Mathf.RoundToInt(sessionData.overallAccuracy * 1.5f);
+            onProgress?.Invoke(0.92f, "Đối sánh căn chỉnh chuỗi động tác theo thời gian (DTW)...");
+            yield return new WaitForSeconds(0.2f);
 
-            // Top error joints
+            // 4. Chạy thuật toán Dynamic Time Warping (DTW) thực tế
+            var (dtwAcc, deviations, avgDrift) = DtwScorer.ComputeWithDeviations(frameResults, fps > 0f ? fps : 30f);
+
+            // 5. Tổng hợp dữ liệu kết quả thực tế
+            float frameAcc = (frameResults.Count > 0) ? ((float)passCount / frameResults.Count * 100f) : 0f;
+            float overallScore = Mathf.Clamp(Mathf.Round(frameAcc * 0.45f + dtwAcc * 0.55f), 5f, 100f);
+
+            var sessionData = new SessionEvaluationData
+            {
+                lessonTitle = string.IsNullOrEmpty(lessonTitle) ? "HIP HOP BASIC • ARM GROOVE" : lessonTitle,
+                sessionDuration = sessionDuration > 0f ? sessionDuration : (studentFrames.Count / (fps > 0 ? fps : 30f)),
+                analyzedVideoPath = videoPath,
+                isImportedVideo = true,
+                frameByFrameAccuracy = Mathf.Round(frameAcc),
+                dtwAccuracy = Mathf.Round(dtwAcc),
+                overallAccuracy = overallScore,
+                dtwDeviations = deviations,
+                dtwTimeDriftSeconds = avgDrift,
+                frameResults = frameResults,
+                totalMovementsEvaluated = Mathf.Max(6, Mathf.RoundToInt(sessionDuration / 2.5f)),
+                xpEarned = Mathf.Clamp(Mathf.RoundToInt(overallScore * 1.5f), 10, 150),
+                jointErrorCounts = errorCounts
+            };
+
+            // Top khớp sai lệch nhiều nhất
             var sortedErrors = new List<KeyValuePair<string, int>>(errorCounts);
             sortedErrors.Sort((a, b) => b.Value.CompareTo(a.Value));
             sessionData.topErrorJoints = sortedErrors;
 
-            // Nhận xét AI Coach
-            if (sessionData.overallAccuracy >= 85f)
+            // Nhận xét thực tế từ AI Coach dựa trên điểm số và khớp sai nhiều nhất
+            if (overallScore >= 88f)
             {
-                sessionData.coachAdvice = "Thực hiện rất tốt! Nhịp điệu và tư thế chuẩn xác.";
+                sessionData.coachAdvice = "Vũ đạo xuất sắc! Động tác chuẩn xác và vào nhịp rất đều.";
             }
-            else if (avgDrift > 0.25f)
+            else if (overallScore >= 70f)
             {
-                sessionData.coachAdvice = $"Chú ý nhịp điệu: Bạn có xu hướng đi chậm nhịp {avgDrift:F2}s ở các đoạn chuyển thế.";
+                if (Mathf.Abs(avgDrift) > 0.2f)
+                {
+                    string dir = avgDrift > 0 ? "sớm" : "trễ";
+                    sessionData.coachAdvice = $"Khá tốt! Bạn có xu hướng đi {dir} nhịp {Mathf.Abs(avgDrift):F2}s ở các đoạn chuyển động.";
+                }
+                else if (sortedErrors.Count > 0 && sortedErrors[0].Value > (frameResults.Count * 0.25f))
+                {
+                    string jointVi = TranslateJoint(sortedErrors[0].Key);
+                    sessionData.coachAdvice = $"Khá tốt! Hãy chú ý mở góc {jointVi} chuẩn xác hơn theo huấn luyện viên.";
+                }
+                else
+                {
+                    sessionData.coachAdvice = "Khá tốt! Giữ vững biên độ chuyển động và duy trì nhịp đều đặn.";
+                }
+            }
+            else if (overallScore >= 45f)
+            {
+                if (sortedErrors.Count > 0)
+                {
+                    string jointVi = TranslateJoint(sortedErrors[0].Key);
+                    sessionData.coachAdvice = $"Cần luyện tập thêm: Khớp {jointVi} sai lệch nhiều so với động tác mẫu.";
+                }
+                else
+                {
+                    sessionData.coachAdvice = "Cần luyện tập thêm: Động tác chưa theo kịp biên độ và tiết tấu của bài nhảy.";
+                }
             }
             else
             {
-                sessionData.coachAdvice = "Cần mở rộng biên độ tay và kiểm soát trọng tâm chắc chắn hơn.";
+                sessionData.coachAdvice = "Động tác sai lệch nhiều so với bài nhảy mẫu. Hãy xem lại video hướng dẫn và tập chậm từng nhịp!";
             }
 
-            // Tính 7 kỹ năng
+            // 6. Tính 7 kỹ năng thực tế & PlayerPrefs persistence
             DanceSessionManager.CalculateSevenSkills(sessionData, frameResults, errorCounts);
             DanceSessionManager.ApplyPlayerPrefsData(sessionData);
 
             onProgress?.Invoke(1.0f, "Hoàn tất phân tích!");
             yield return new WaitForSeconds(0.2f);
 
+            Debug.Log($"[VideoAnalysisService] Phân tích hoàn tất! Video: {Path.GetFileName(videoPath)}, Điểm tổng kết: {overallScore:F0}% (Khung: {frameAcc:F1}%, DTW: {dtwAcc:F1}%), Lệch nhịp: {avgDrift:F2}s");
             onComplete?.Invoke(sessionData);
         }
 
-        private void EvaluateFramesWithML(List<FrameEvaluationResult> frames)
+        #region Pose JSON Parsing & Teacher Data
+
+        public class FramePoseData
         {
-            if (frames == null || mlPipeline == null) return;
+            public int frameIndex;
+            public float timestamp;
+            public bool poseDetected;
+            public Dictionary<string, Vector2> joints = new Dictionary<string, Vector2>();
+        }
 
-            foreach (var fr in frames)
+        private List<FramePoseData> ParseStudentPoseJson(string jsonPath, out float duration, out float fps)
+        {
+            duration = 12.3f;
+            fps = 30f;
+            var list = new List<FramePoseData>();
+
+            try
             {
-                if (fr.joints == null) continue;
+                string json = File.ReadAllText(jsonPath);
 
-                float frameScoreSum = 0f;
-                foreach (var kvp in fr.joints)
+                // Đọc metadata
+                int dfIdx = json.IndexOf("\"duration\":");
+                if (dfIdx >= 0)
                 {
-                    var item = kvp.Value;
-                    // Tính sai số khoảng cách không gian
-                    item.jointError = Vector2.Distance(item.studentPos, item.teacherPos);
-                    item.jointCosine = Vector2.Dot(item.studentPos.normalized, item.teacherPos.normalized);
-
-                    // Sử dụng mô hình ML hoặc heuristic để phán quyết
-                    item.isPass = (item.jointError <= 0.22f) ? 1 : 0;
-                    if (item.isPass == 1) frameScoreSum += 1.0f;
+                    string dStr = json.Substring(dfIdx + 11, 10).Split(',', '\n', '}')[0].Trim();
+                    float.TryParse(dStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out duration);
                 }
 
-                fr.frameScore = frameScoreSum;
-                fr.isPass = (frameScoreSum >= 7.5f);
+                int fpsIdx = json.IndexOf("\"fps\":");
+                if (fpsIdx >= 0)
+                {
+                    string fStr = json.Substring(fpsIdx + 6, 8).Split(',', '\n', '}')[0].Trim();
+                    float.TryParse(fStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out fps);
+                }
+
+                // Quét từng frame và student_joints
+                int sPos = 0;
+                int frameCounter = 0;
+
+                while ((sPos = json.IndexOf("\"student_joints\":", sPos)) >= 0)
+                {
+                    int openBrace = json.IndexOf('{', sPos);
+                    if (openBrace < 0) break;
+
+                    int depth = 0;
+                    int closeBrace = -1;
+                    for (int i = openBrace; i < json.Length; i++)
+                    {
+                        if (json[i] == '{') depth++;
+                        else if (json[i] == '}')
+                        {
+                            depth--;
+                            if (depth == 0) { closeBrace = i; break; }
+                        }
+                    }
+                    if (closeBrace < 0) break;
+
+                    string block = json.Substring(openBrace, closeBrace - openBrace + 1);
+                    var fpd = new FramePoseData
+                    {
+                        frameIndex = frameCounter,
+                        timestamp = frameCounter / (fps > 0 ? fps : 30f),
+                        poseDetected = true
+                    };
+
+                    int detectedJointsCount = 0;
+                    foreach (var j in DanceMLPipeline.JOINTS)
+                    {
+                        int jIdx = block.IndexOf("\"" + j + "\":");
+                        if (jIdx >= 0)
+                        {
+                            int xIdx = block.IndexOf("\"x\":", jIdx);
+                            int yIdx = block.IndexOf("\"y\":", jIdx);
+                            if (xIdx >= 0 && yIdx >= 0)
+                            {
+                                string xStr = block.Substring(xIdx + 4, 8).Split(',', '}')[0].Trim();
+                                string yStr = block.Substring(yIdx + 4, 8).Split(',', '}')[0].Trim();
+                                float x, y;
+                                if (float.TryParse(xStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out x) &&
+                                    float.TryParse(yStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out y))
+                                {
+                                    fpd.joints[j] = new Vector2(x, y);
+                                    detectedJointsCount++;
+                                }
+                            }
+                        }
+                    }
+
+                    fpd.poseDetected = (detectedJointsCount >= 6);
+                    list.Add(fpd);
+
+                    frameCounter++;
+                    sPos = closeBrace + 1;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[VideoAnalysisService] Lỗi khi phân tích JSON học viên: " + ex.Message);
+            }
+
+            return list;
+        }
+
+        private List<Dictionary<string, Vector2>> LoadTeacherReferenceData(VideoClip refClip, out float duration)
+        {
+            duration = 12.27f;
+            var list = new List<Dictionary<string, Vector2>>();
+
+            // 1. Thử nạp 1_teacher_pose.json từ StreamingAssets
+            string path1 = Path.Combine(Application.streamingAssetsPath, "1_teacher_pose.json");
+            if (!File.Exists(path1))
+            {
+                path1 = Path.Combine(Application.dataPath, "_Project/StreamingAssets/1_teacher_pose.json");
+            }
+
+            if (File.Exists(path1))
+            {
+                list = ParseTeacherPoseJson(path1, "student_joints", out duration);
+                if (list.Count > 0) return list;
+            }
+
+            // 2. Thử nạp dance_demo_data.json
+            string path2 = Path.Combine(Application.streamingAssetsPath, "dance_demo_data.json");
+            if (!File.Exists(path2))
+            {
+                path2 = Path.Combine(Application.dataPath, "_Project/StreamingAssets/dance_demo_data.json");
+            }
+
+            if (File.Exists(path2))
+            {
+                list = ParseTeacherPoseJson(path2, "teacher_joints", out duration);
+                if (list.Count > 0) return list;
+            }
+
+            return list;
+        }
+
+        private List<Dictionary<string, Vector2>> ParseTeacherPoseJson(string path, string jointsKey, out float duration)
+        {
+            duration = 12.27f;
+            var list = new List<Dictionary<string, Vector2>>();
+
+            try
+            {
+                string json = File.ReadAllText(path);
+
+                int dIdx = json.IndexOf("\"duration\":");
+                if (dIdx >= 0)
+                {
+                    string dStr = json.Substring(dIdx + 11, 10).Split(',', '\n', '}')[0].Trim();
+                    float.TryParse(dStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out duration);
+                }
+
+                int pos = 0;
+                string searchKey = "\"" + jointsKey + "\":";
+                while ((pos = json.IndexOf(searchKey, pos)) >= 0)
+                {
+                    int openBrace = json.IndexOf('{', pos);
+                    if (openBrace < 0) break;
+
+                    int depth = 0;
+                    int closeBrace = -1;
+                    for (int i = openBrace; i < json.Length; i++)
+                    {
+                        if (json[i] == '{') depth++;
+                        else if (json[i] == '}')
+                        {
+                            depth--;
+                            if (depth == 0) { closeBrace = i; break; }
+                        }
+                    }
+                    if (closeBrace < 0) break;
+
+                    string block = json.Substring(openBrace, closeBrace - openBrace + 1);
+                    var dict = new Dictionary<string, Vector2>();
+
+                    foreach (var j in DanceMLPipeline.JOINTS)
+                    {
+                        int jIdx = block.IndexOf("\"" + j + "\":");
+                        if (jIdx >= 0)
+                        {
+                            int xIdx = block.IndexOf("\"x\":", jIdx);
+                            int yIdx = block.IndexOf("\"y\":", jIdx);
+                            if (xIdx >= 0 && yIdx >= 0)
+                            {
+                                string xStr = block.Substring(xIdx + 4, 8).Split(',', '}')[0].Trim();
+                                string yStr = block.Substring(yIdx + 4, 8).Split(',', '}')[0].Trim();
+                                float x, y;
+                                if (float.TryParse(xStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out x) &&
+                                    float.TryParse(yStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out y))
+                                {
+                                    dict[j] = new Vector2(x, y);
+                                }
+                            }
+                        }
+                    }
+
+                    list.Add(dict);
+                    pos = closeBrace + 1;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[VideoAnalysisService] Lỗi khi nạp teacher poses: " + ex.Message);
+            }
+
+            return list;
+        }
+
+        private static string TranslateJoint(string j)
+        {
+            switch (j)
+            {
+                case "left_wrist": return "cổ tay trái";
+                case "right_wrist": return "cổ tay phải";
+                case "left_elbow": return "khuỷu tay trái";
+                case "right_elbow": return "khuỷu tay phải";
+                case "left_shoulder": return "vai trái";
+                case "right_shoulder": return "vai phải";
+                case "left_hip": return "hông trái";
+                case "right_hip": return "hông phải";
+                case "left_knee": return "đầu gối trái";
+                case "right_knee": return "đầu gối phải";
+                case "left_ankle": return "cổ chân trái";
+                case "right_ankle": return "cổ chân phải";
+                case "nose": return "đầu / mũi";
+                default: return j;
             }
         }
+
+        #endregion
+
+        #region Video Exporting
 
         /// <summary>
         /// Xuất video MP4 có gắn khung xương skeleton và HUD điểm số bằng backend OpenCV.
@@ -328,6 +650,7 @@ namespace DanceUp.Features.ImportEvaluation
             File.WriteAllText(tempAnalysisJson, serializedJson, Encoding.UTF8);
 
             string scriptPath = Path.Combine(Application.dataPath, "_Project/Scripts/AI/pose_extractor.py");
+            string pyExe = ResolvePythonExecutable();
 
             bool isDone = false;
             bool exportSuccess = false;
@@ -340,8 +663,8 @@ namespace DanceUp.Features.ImportEvaluation
                 {
                     var psi = new ProcessStartInfo
                     {
-                        FileName = "python",
-                        Arguments = $"\"{scriptPath}\" --mode export_video --video \"{videoPath}\" --analysis \"{tempAnalysisJson}\" --output-video \"{outVideoPath}\"",
+                        FileName = pyExe,
+                        Arguments = $"-u \"{scriptPath}\" --mode export_video --video \"{videoPath}\" --analysis \"{tempAnalysisJson}\" --output-video \"{outVideoPath}\"",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
@@ -373,7 +696,10 @@ namespace DanceUp.Features.ImportEvaluation
 
                         process.ErrorDataReceived += (s, e) =>
                         {
-                            if (!string.IsNullOrEmpty(e.Data)) exportError += e.Data + "\n";
+                            if (!string.IsNullOrEmpty(e.Data) && !e.Data.Contains("W0000") && !e.Data.Contains("oneDNN"))
+                            {
+                                exportError += e.Data + "\n";
+                            }
                         };
 
                         process.Start();
@@ -414,179 +740,6 @@ namespace DanceUp.Features.ImportEvaluation
                 Debug.LogWarning("[VideoAnalysisService] Export failed: " + exportError);
                 onComplete?.Invoke(false, "Lỗi khi xuất video: " + exportError);
             }
-        }
-
-        #region JSON Parsing & Fallbacks
-
-        [Serializable]
-        private class RawVideoAnalysis
-        {
-            public float fps;
-            public int total_frames;
-            public float duration;
-            public List<RawFrame> frames;
-        }
-
-        [Serializable]
-        private class RawJoint
-        {
-            public float x;
-            public float y;
-            public float visibility;
-            public int is_pass;
-        }
-
-        [Serializable]
-        private class RawFrame
-        {
-            public int frame_index;
-            public float timestamp;
-            public bool pose_detected;
-            public Dictionary<string, RawJoint> student_joints;
-        }
-
-        private List<FrameEvaluationResult> ParseAnalyzedJson(string jsonPath, out float duration)
-        {
-            duration = 30f;
-            var list = new List<FrameEvaluationResult>();
-
-            try
-            {
-                string jsonText = File.ReadAllText(jsonPath);
-                // Load Teacher Reference để so sánh
-                var teacherData = LoadTeacherData();
-
-                // Simple JSON parser
-                int totalFrames = 300;
-                var rawLines = jsonText.Split('\n');
-                foreach (var line in rawLines)
-                {
-                    if (line.Contains("\"total_frames\":"))
-                    {
-                        var parts = line.Split(':');
-                        if (parts.Length > 1) int.TryParse(parts[1].Trim().TrimEnd(','), out totalFrames);
-                    }
-                    if (line.Contains("\"duration\":"))
-                    {
-                        var parts = line.Split(':');
-                        if (parts.Length > 1) float.TryParse(parts[1].Trim().TrimEnd(','), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out duration);
-                    }
-                }
-
-                // Chuyển đổi sang FrameEvaluationResult
-                for (int i = 0; i < totalFrames; i++)
-                {
-                    float t = i / 30f;
-                    var fr = new FrameEvaluationResult
-                    {
-                        frameIndex = i,
-                        timestamp = t,
-                        maxScore = 13f
-                    };
-
-                    // Gán joints từ teacher mẫu và student
-                    AssignJointsFromTeacher(fr, teacherData, i, t);
-                    list.Add(fr);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning("[VideoAnalysisService] Lỗi khi đọc JSON phân tích: " + ex.Message);
-            }
-
-            return list;
-        }
-
-        private DanceReplayMVP.DemoRootData LoadTeacherData()
-        {
-            try
-            {
-                string path = Path.Combine(Application.streamingAssetsPath, "dance_demo_data.json");
-                if (!File.Exists(path))
-                {
-                    path = Path.Combine(Application.dataPath, "_Project/StreamingAssets/dance_demo_data.json");
-                }
-                if (File.Exists(path))
-                {
-                    string json = File.ReadAllText(path);
-                    return JsonUtility.FromJson<DanceReplayMVP.DemoRootData>(json);
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        private void AssignJointsFromTeacher(FrameEvaluationResult fr, DanceReplayMVP.DemoRootData teacherData, int frameIdx, float timestamp)
-        {
-            string[] joints = DanceMLPipeline.JOINTS;
-            float sway = Mathf.Sin(timestamp * 3f) * 0.12f;
-
-            foreach (var j in joints)
-            {
-                Vector2 teacherPos = GetDefaultJointPos(j, timestamp);
-                // Tạo một chút sai số nhẹ tự nhiên cho bài nhảy học viên
-                float noiseX = (Mathf.Sin(timestamp * 5f + j.GetHashCode()) * 0.04f);
-                float noiseY = (Mathf.Cos(timestamp * 4f + j.GetHashCode()) * 0.03f);
-
-                // Nếu ở phân đoạn 3s-7s (phân đoạn lỗi mẫu), tăng sai số ở cổ tay trái
-                if (timestamp >= 3f && timestamp <= 7f && j == "left_wrist")
-                {
-                    noiseX -= 0.18f; // Cổ tay trái mở góc chưa đủ
-                    noiseY -= 0.12f;
-                }
-
-                Vector2 studentPos = teacherPos + new Vector2(noiseX, noiseY);
-
-                fr.joints[j] = new JointScoreItem
-                {
-                    jointName = j,
-                    studentPos = studentPos,
-                    teacherPos = teacherPos,
-                    isPass = 1
-                };
-            }
-        }
-
-        private Vector2 GetDefaultJointPos(string j, float t)
-        {
-            float sway = Mathf.Sin(t * 3f) * 0.15f;
-            switch (j)
-            {
-                case "nose": return new Vector2(0.5f + sway * 0.3f, 0.82f);
-                case "left_shoulder": return new Vector2(0.42f + sway, 0.70f);
-                case "right_shoulder": return new Vector2(0.58f + sway, 0.70f);
-                case "left_elbow": return new Vector2(0.35f + sway * 1.2f, 0.55f);
-                case "right_elbow": return new Vector2(0.65f + sway * 1.2f, 0.55f);
-                case "left_wrist": return new Vector2(0.30f + sway * 1.5f, 0.42f);
-                case "right_wrist": return new Vector2(0.70f + sway * 1.5f, 0.42f);
-                case "left_hip": return new Vector2(0.45f + sway * 0.5f, 0.42f);
-                case "right_hip": return new Vector2(0.55f + sway * 0.5f, 0.42f);
-                case "left_knee": return new Vector2(0.44f + sway * 0.4f, 0.25f);
-                case "right_knee": return new Vector2(0.56f + sway * 0.4f, 0.25f);
-                case "left_ankle": return new Vector2(0.43f + sway * 0.2f, 0.08f);
-                case "right_ankle": return new Vector2(0.57f + sway * 0.2f, 0.08f);
-                default: return new Vector2(0.5f, 0.5f);
-            }
-        }
-
-        private List<FrameEvaluationResult> LoadFallbackFrames(out float duration)
-        {
-            duration = 12.2f;
-            int count = 368; // Khớp với 1_teacher.mp4
-            var list = new List<FrameEvaluationResult>();
-            for (int i = 0; i < count; i++)
-            {
-                float t = i / 30f;
-                var fr = new FrameEvaluationResult
-                {
-                    frameIndex = i,
-                    timestamp = t,
-                    maxScore = 13f
-                };
-                AssignJointsFromTeacher(fr, null, i, t);
-                list.Add(fr);
-            }
-            return list;
         }
 
         #endregion
