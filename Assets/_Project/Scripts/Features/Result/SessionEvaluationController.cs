@@ -426,30 +426,40 @@ namespace DanceUp.Features.Result
 
             if (txtDtwAccuracy != null)
             {
+                txtDtwAccuracy.enableAutoSizing = true;
+                txtDtwAccuracy.fontSizeMin = 10f;
+                txtDtwAccuracy.fontSizeMax = 15f;
                 txtDtwAccuracy.text = string.Format("{0:F0}%", Mathf.Clamp(dtwScore, 0f, 100f));
             }
 
             if (txtFrameAccuracy != null)
             {
+                txtFrameAccuracy.enableAutoSizing = true;
+                txtFrameAccuracy.fontSizeMin = 10f;
+                txtFrameAccuracy.fontSizeMax = 15f;
                 txtFrameAccuracy.text = string.Format("{0:F0}%", Mathf.Clamp(frameScore, 0f, 100f));
             }
 
             if (txtTimeDrift != null)
             {
+                txtTimeDrift.enableAutoSizing = true;
+                txtTimeDrift.fontSizeMin = 9f;
+                txtTimeDrift.fontSizeMax = 13.5f;
+                txtTimeDrift.enableWordWrapping = false;
                 float drift = data.dtwTimeDriftSeconds;
                 if (Mathf.Abs(drift) < 0.08f)
                 {
-                    txtTimeDrift.text = "±0.05s (Khớp chuẩn)";
+                    txtTimeDrift.text = "±0.05s (Chuẩn)";
                     txtTimeDrift.color = new Color(0.1f, 0.95f, 0.45f, 1f); // Green
                 }
                 else if (drift > 0)
                 {
-                    txtTimeDrift.text = string.Format("+{0:F2}s (Sớm nhịp)", drift);
+                    txtTimeDrift.text = string.Format("+{0:F2}s (Sớm)", drift);
                     txtTimeDrift.color = new Color(0.96f, 0.62f, 0.04f, 1f); // Amber
                 }
                 else
                 {
-                    txtTimeDrift.text = string.Format("{0:F2}s (Trễ nhịp)", drift);
+                    txtTimeDrift.text = string.Format("{0:F2}s (Trễ)", drift);
                     txtTimeDrift.color = new Color(1f, 0.35f, 0.45f, 1f); // Coral
                 }
             }
@@ -564,43 +574,64 @@ namespace DanceUp.Features.Result
                 count++;
                 if (count > 3) break;
 
-                var itemObj = new GameObject("Item_" + seg.startTime.ToString("F1"), typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
+                var itemObj = new GameObject("Item_" + seg.startTime.ToString("F1"), typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
                 itemObj.transform.SetParent(deviationSegmentsListContainer, false);
                 var iRect = itemObj.GetComponent<RectTransform>();
                 iRect.sizeDelta = new Vector2(0f, 32f);
+
+                var iLe = itemObj.GetComponent<LayoutElement>();
+                iLe.minHeight = 32f;
+                iLe.preferredHeight = 32f;
+                iLe.flexibleWidth = 1f;
 
                 var img = itemObj.GetComponent<Image>();
                 img.color = new Color(0.95f, 0.965f, 0.98f, 1f); // #F1F5F9 Light Gray
 
                 var hlg = itemObj.GetComponent<HorizontalLayoutGroup>();
-                hlg.childControlWidth = false;
+                hlg.childControlWidth = true;
                 hlg.childControlHeight = true;
                 hlg.childForceExpandWidth = false;
                 hlg.childForceExpandHeight = true;
                 hlg.padding = new RectOffset(8, 8, 4, 4);
-                hlg.spacing = 8f;
+                hlg.spacing = 6f;
 
-                var timeObj = new GameObject("Txt_Time", typeof(RectTransform), typeof(TextMeshProUGUI));
+                var timeObj = new GameObject("Txt_Time", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
                 timeObj.transform.SetParent(itemObj.transform, false);
                 var txtTime = timeObj.GetComponent<TextMeshProUGUI>();
                 if (font != null) txtTime.font = font;
-                txtTime.fontSize = 11f;
+                txtTime.fontSize = 10.5f;
                 txtTime.fontStyle = FontStyles.Bold;
+                txtTime.alignment = TextAlignmentOptions.MidlineLeft;
                 txtTime.color = seg.severity == 0 ? new Color(0.067f, 0.478f, 0.318f, 1f) : (seg.severity == 1 ? new Color(0.96f, 0.54f, 0f, 1f) : new Color(0.706f, 0.137f, 0.094f, 1f));
                 txtTime.text = string.Format("[{0:F1}s - {1:F1}s]", seg.startTime, seg.endTime);
+                var tLe = timeObj.GetComponent<LayoutElement>();
+                tLe.minWidth = 78f;
+                tLe.preferredWidth = 78f;
+                tLe.flexibleWidth = 0f;
 
-                var descObj = new GameObject("Txt_Desc", typeof(RectTransform), typeof(TextMeshProUGUI));
+                var descObj = new GameObject("Txt_Desc", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
                 descObj.transform.SetParent(itemObj.transform, false);
                 var txtDesc = descObj.GetComponent<TextMeshProUGUI>();
                 if (font != null) txtDesc.font = font;
-                txtDesc.fontSize = 11f;
+                txtDesc.fontSize = 10.5f;
+                txtDesc.alignment = TextAlignmentOptions.MidlineLeft;
                 txtDesc.color = new Color(0.12f, 0.18f, 0.28f, 1f);
                 txtDesc.text = !string.IsNullOrEmpty(seg.description) ? seg.description : (seg.deviationType + " (" + TranslateJoint(seg.primaryJoint) + ")");
+                txtDesc.overflowMode = TextOverflowModes.Ellipsis;
+                txtDesc.enableWordWrapping = false;
+                var dLe = descObj.GetComponent<LayoutElement>();
+                dLe.minWidth = 90f;
+                dLe.preferredWidth = 145f;
+                dLe.flexibleWidth = 1f;
 
-                var btnObj = new GameObject("Btn_Review", typeof(RectTransform), typeof(Image), typeof(Button));
+                var btnObj = new GameObject("Btn_Review", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
                 btnObj.transform.SetParent(itemObj.transform, false);
                 var bRect = btnObj.GetComponent<RectTransform>();
                 bRect.sizeDelta = new Vector2(62f, 24f);
+                var bLe = btnObj.GetComponent<LayoutElement>();
+                bLe.minWidth = 62f;
+                bLe.preferredWidth = 62f;
+                bLe.flexibleWidth = 0f;
                 btnObj.GetComponent<Image>().color = new Color(0.898f, 0.969f, 1f, 1f); // #E5F7FF
 
                 var btnTxtObj = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));

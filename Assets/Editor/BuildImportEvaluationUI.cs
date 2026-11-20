@@ -397,13 +397,13 @@ namespace DanceUp.Editor
             Color ColorDCoachGreen = new Color(0.067f, 0.478f, 0.318f, 1f);   // #117A51
             Color ColorDCoachAmber = new Color(1f, 0.541f, 0f, 1f);           // #FF8A00
 
-            // 1. Viền ngoài Card_DtwDeviation chuẩn theo Figma (#D8E2EB, 350px x 275px)
+            // 1. Viền ngoài Card_DtwDeviation chuẩn theo Figma (#D8E2EB, 350px x 285px)
             GameObject cardOuter = CreateImage("Card_DtwDeviation", contentTrans, sprRounded, ColorDCoachBorder, 2.5f);
             var cardRt = cardOuter.GetComponent<RectTransform>();
-            cardRt.sizeDelta = new Vector2(350f, 275f);
+            cardRt.sizeDelta = new Vector2(350f, 285f);
             var le = cardOuter.AddComponent<LayoutElement>();
-            le.minHeight = 275f;
-            le.preferredHeight = 275f;
+            le.minHeight = 285f;
+            le.preferredHeight = 285f;
 
             // Nền trắng bên trong lùi vào 1.5px
             GameObject cardBg = CreateImage("CardBg", cardOuter.transform, sprRounded, Color.white, 2.5f);
@@ -412,25 +412,25 @@ namespace DanceUp.Editor
             cbRt.offsetMin = new Vector2(1.5f, 1.5f);
             cbRt.offsetMax = new Vector2(-1.5f, -1.5f);
 
-            // Header
+            // Header (Cố định 315px căn giữa)
             GameObject txtTitle = CreateText("Txt_Title", cardBg.transform, "SO SÁNH CHUỖI ĐỘNG TÁC (DTW)", fontBold, 13.5f, ColorDCoachDark, TextAlignmentOptions.Left);
             var ttRt = txtTitle.GetComponent<RectTransform>();
-            SetAnchors(ttRt, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f));
-            ttRt.anchoredPosition = new Vector2(16f, -14f);
-            ttRt.sizeDelta = new Vector2(-32f, 20f);
+            SetAnchors(ttRt, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+            ttRt.anchoredPosition = new Vector2(0f, -14f);
+            ttRt.sizeDelta = new Vector2(315f, 20f);
 
             GameObject txtSub = CreateText("Txt_Subtitle", cardBg.transform, "Đối sánh căn chỉnh thời gian & phân tích sai lệch động tác", fontRegular, 10.5f, ColorDCoachMuted, TextAlignmentOptions.Left);
             var tsRt = txtSub.GetComponent<RectTransform>();
-            SetAnchors(tsRt, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f));
-            tsRt.anchoredPosition = new Vector2(16f, -34f);
-            tsRt.sizeDelta = new Vector2(-32f, 16f);
+            SetAnchors(tsRt, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+            tsRt.anchoredPosition = new Vector2(0f, -34f);
+            tsRt.sizeDelta = new Vector2(315f, 16f);
 
-            // 3 Cột thống kê DTW (Pills Row)
+            // 3 Cột thống kê DTW (Pills Row - Cố định 315px căn giữa)
             GameObject statRow = CreateUIObject("StatRow", cardBg.transform);
             var srRt = statRow.GetComponent<RectTransform>();
-            SetAnchors(srRt, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
-            srRt.anchoredPosition = new Vector2(0f, -56f);
-            srRt.sizeDelta = new Vector2(318f, 54f);
+            SetAnchors(srRt, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+            srRt.anchoredPosition = new Vector2(0f, -54f);
+            srRt.sizeDelta = new Vector2(315f, 54f);
 
             var hlg = statRow.AddComponent<HorizontalLayoutGroup>();
             hlg.spacing = 8f;
@@ -446,37 +446,37 @@ namespace DanceUp.Editor
             // Stat 3: Time drift
             var p3 = CreateStatPillLight(statRow.transform, sprRounded, "Độ lệch nhịp", "-0.15s", ColorDCoachAmber, fontBold, fontRegular);
 
-            // Timeline Strip (Thanh thời gian trực quan hóa)
+            // Timeline Strip (Thanh thời gian trực quan hóa - Cố định 315px căn giữa)
             GameObject timelineBar = CreateImage("TimelineBar", cardBg.transform, sprRounded, new Color(0.92f, 0.94f, 0.96f, 1f), 3f);
             var tlRt = timelineBar.GetComponent<RectTransform>();
-            SetAnchors(tlRt, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
-            tlRt.anchoredPosition = new Vector2(0f, -122f);
-            tlRt.sizeDelta = new Vector2(318f, 22f);
+            SetAnchors(tlRt, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+            tlRt.anchoredPosition = new Vector2(0f, -118f);
+            tlRt.sizeDelta = new Vector2(315f, 20f);
 
             CreateTimelineBlock(timelineBar.transform, sprRounded, ColorDCoachGreen, 0f, 0.28f);
             CreateTimelineBlock(timelineBar.transform, sprRounded, ColorDCoachAmber, 0.28f, 0.58f);
             CreateTimelineBlock(timelineBar.transform, sprRounded, ColorDCoachGreen, 0.58f, 1.0f);
 
-            // Chú giải màu sắc Timeline
+            // Chú giải màu sắc Timeline (Cố định 315px căn giữa)
             GameObject legendRow = CreateText("Legend", cardBg.transform, "● Chuẩn nhịp (Xanh)   ● Lệch nhịp (Vàng)   ● Sai động tác (Đỏ)", fontRegular, 9.5f, ColorDCoachMuted, TextAlignmentOptions.Center);
             var lgRt = legendRow.GetComponent<RectTransform>();
-            SetAnchors(lgRt, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
-            lgRt.anchoredPosition = new Vector2(0f, -150f);
-            lgRt.sizeDelta = new Vector2(318f, 16f);
+            SetAnchors(lgRt, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+            lgRt.anchoredPosition = new Vector2(0f, -144f);
+            lgRt.sizeDelta = new Vector2(315f, 16f);
 
-            // Tóm tắt phân đoạn sai lệch
+            // Tóm tắt phân đoạn sai lệch (Cố định 315px căn giữa)
             GameObject txtDevSummary = CreateText("Txt_DeviationSummary", cardBg.transform, "Phát hiện phân đoạn lệch nhịp & động tác cần điều chỉnh:", fontRegular, 10.5f, ColorDCoachDark, TextAlignmentOptions.Left);
             var tdsRt = txtDevSummary.GetComponent<RectTransform>();
-            SetAnchors(tdsRt, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f));
-            tdsRt.anchoredPosition = new Vector2(16f, -172f);
-            tdsRt.sizeDelta = new Vector2(-32f, 16f);
+            SetAnchors(tdsRt, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+            tdsRt.anchoredPosition = new Vector2(0f, -166f);
+            tdsRt.sizeDelta = new Vector2(315f, 18f);
 
-            // Danh sách phân đoạn sai lệch (DeviationList)
+            // Danh sách phân đoạn sai lệch (DeviationList - Cố định 315px căn giữa)
             GameObject devList = CreateUIObject("DeviationList", cardBg.transform);
             var dlRt = devList.GetComponent<RectTransform>();
-            SetAnchors(dlRt, new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0.5f, 0.5f));
-            dlRt.offsetMin = new Vector2(14f, 10f);
-            dlRt.offsetMax = new Vector2(-14f, -194f);
+            SetAnchors(dlRt, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f));
+            dlRt.anchoredPosition = new Vector2(0f, -188f);
+            dlRt.sizeDelta = new Vector2(315f, 80f);
 
             var dlvlg = devList.AddComponent<VerticalLayoutGroup>();
             dlvlg.spacing = 6f;
@@ -578,10 +578,27 @@ namespace DanceUp.Editor
         private static Transform CreateStatPillLight(Transform parent, Sprite sprRounded, string label, string val, Color valColor, TMP_FontAsset fontBold, TMP_FontAsset fontRegular)
         {
             GameObject pill = CreateImage("Pill_" + label, parent, sprRounded, new Color(0.95f, 0.965f, 0.98f, 1f), 3f);
-            CreateText("Txt_Lbl", pill.transform, label, fontRegular, 9.5f, new Color(0.337f, 0.396f, 0.471f, 1f), TextAlignmentOptions.Center)
-                .GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, 10f);
-            CreateText("Txt_Val", pill.transform, val, fontBold, 15f, valColor, TextAlignmentOptions.Center)
-                .GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, -8f);
+            
+            var lblObj = CreateText("Txt_Lbl", pill.transform, label, fontRegular, 9f, new Color(0.337f, 0.396f, 0.471f, 1f), TextAlignmentOptions.Center);
+            var lRt = lblObj.GetComponent<RectTransform>();
+            SetAnchors(lRt, new Vector2(0f, 0.5f), new Vector2(1f, 1f), new Vector2(0.5f, 0.5f));
+            lRt.offsetMin = new Vector2(2f, 0f);
+            lRt.offsetMax = new Vector2(-2f, -3f);
+
+            var valObj = CreateText("Txt_Val", pill.transform, val, fontBold, 15f, valColor, TextAlignmentOptions.Center);
+            var vRt = valObj.GetComponent<RectTransform>();
+            SetAnchors(vRt, new Vector2(0f, 0f), new Vector2(1f, 0.5f), new Vector2(0.5f, 0.5f));
+            vRt.offsetMin = new Vector2(2f, 3f);
+            vRt.offsetMax = new Vector2(-2f, 0f);
+            var tmpVal = valObj.GetComponent<TextMeshProUGUI>();
+            if (tmpVal != null)
+            {
+                tmpVal.enableAutoSizing = true;
+                tmpVal.fontSizeMin = 9f;
+                tmpVal.fontSizeMax = 15f;
+                tmpVal.enableWordWrapping = false;
+            }
+
             return pill.transform;
         }
 
@@ -650,41 +667,79 @@ namespace DanceUp.Editor
 
             // Thiết lập kích thước thẻ vừa vặn
             var lcRt = lessonCard.GetComponent<RectTransform>();
-            if (lcRt != null) lcRt.sizeDelta = new Vector2(400f, 182f);
+            if (lcRt != null) lcRt.sizeDelta = new Vector2(400f, 185f);
 
             var lcLe = lessonCard.GetComponent<LayoutElement>();
             if (lcLe == null) lcLe = lessonCard.gameObject.AddComponent<LayoutElement>();
-            lcLe.minHeight = 182f;
-            lcLe.preferredHeight = 182f;
+            lcLe.minHeight = 185f;
+            lcLe.preferredHeight = 185f;
+
+            var thumb = lessonCard.Find("Thumb");
+            if (thumb != null)
+            {
+                var tRt = thumb.GetComponent<RectTransform>();
+                tRt.anchoredPosition = new Vector2(57f, -92.5f);
+            }
 
             var infRt = infoTrans.GetComponent<RectTransform>();
-            if (infRt != null) infRt.sizeDelta = new Vector2(274f, 175f);
+            if (infRt != null)
+            {
+                infRt.anchoredPosition = new Vector2(250f, -92.5f);
+                infRt.sizeDelta = new Vector2(274f, 162f);
+            }
+
+            var vlg = infoTrans.GetComponent<VerticalLayoutGroup>();
+            if (vlg != null)
+            {
+                vlg.spacing = 5f;
+                vlg.padding = new RectOffset(0, 0, 0, 0);
+                vlg.childControlWidth = true;
+                vlg.childControlHeight = false;
+                vlg.childForceExpandWidth = true;
+                vlg.childForceExpandHeight = false;
+            }
+
+            var btnSlot = infoTrans.Find("ButtonSlot");
+            if (btnSlot != null)
+            {
+                var bsRt = btnSlot.GetComponent<RectTransform>();
+                bsRt.sizeDelta = new Vector2(274f, 34f);
+                var bsLe = btnSlot.GetComponent<LayoutElement>();
+                if (bsLe != null)
+                {
+                    bsLe.minHeight = 34f;
+                    bsLe.preferredHeight = 34f;
+                }
+                var startBtn = btnSlot.Find("StartButton");
+                if (startBtn != null)
+                {
+                    var sbRt = startBtn.GetComponent<RectTransform>();
+                    sbRt.sizeDelta = new Vector2(0f, 34f);
+                }
+            }
 
             // Nút "Đánh giá video có sẵn" đặt trực tiếp bên dưới nút "Tiếp tục" trong Info
             GameObject btnEval = CreateButtonWithText(
                 "Button_EvaluateExistingVideo",
                 infoTrans,
                 sprRounded,
-                new Color(0.04f, 0.16f, 0.28f, 1f),
+                new Color(0.035f, 0.12f, 0.22f, 1f),
                 "►  ĐÁNH GIÁ VIDEO CÓ SẴN",
                 fontBold,
-                11.5f,
+                11f,
                 ColorCyan,
                 3f
             );
 
             var beRt = btnEval.GetComponent<RectTransform>();
-            beRt.sizeDelta = new Vector2(274f, 40f);
+            beRt.sizeDelta = new Vector2(274f, 34f);
 
             var le = btnEval.AddComponent<LayoutElement>();
-            le.minHeight = 40f;
-            le.preferredHeight = 40f;
+            le.minHeight = 34f;
+            le.preferredHeight = 34f;
             le.flexibleWidth = 1f;
 
-            // Viền subtle cyan
-            var border = CreateImage("Border", btnEval.transform, sprRounded, ColorCyanMuted, 3f);
-            SetAnchors(border.GetComponent<RectTransform>(), Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
-            border.GetComponent<Image>().raycastTarget = false;
+            // KHÔNG tạo "Border" child gây tràn cyan 374x140px!
 
             // Đảm bảo LessonScreenController có trên LessonsScreen và liên kết đầy đủ
             var lessonCtrl = lessonsTrans.GetComponent<LessonScreenController>();
@@ -693,6 +748,8 @@ namespace DanceUp.Editor
             var so = new SerializedObject(lessonCtrl);
             so.FindProperty("btnEvaluateExistingVideo").objectReferenceValue = btnEval.GetComponent<Button>();
             if (modalCtrl != null) so.FindProperty("importModalController").objectReferenceValue = modalCtrl;
+            if (loadCtrl != null) so.FindProperty("loadingController").objectReferenceValue = loadCtrl;
+            so.ApplyModifiedProperties();
             if (loadCtrl != null) so.FindProperty("loadingController").objectReferenceValue = loadCtrl;
             so.ApplyModifiedProperties();
         }
