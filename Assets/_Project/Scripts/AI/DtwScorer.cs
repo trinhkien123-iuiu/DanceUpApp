@@ -34,35 +34,327 @@ namespace DanceUp.AI
         /// <returns>dtwAccuracy ∈ [0, 100] (%)</returns>
         public static float ComputeFromFrameResults(List<FrameEvaluationResult> frames)
         {
-            if (frames == null || frames.Count < 2)
-                return 0f;
+            var result = ComputeWithDeviations(frames);
+            return result.accuracy;
+        }
 
-            // Trích xuất hai chuỗi vector pose từ dữ liệu frame đã ghi
+        /// <summary>
+        /// Tính điểm DTW, trích xuất Warping Path và phân tích chi tiết các đoạn sai lệch nhịp/tư thế.
+        /// </summary>
+        public static (float accuracy, List<DtwDeviationSegment> deviations, float avgTimeDrift) ComputeWithDeviations(List<FrameEvaluationResult> frames, float fps = 30f)
+        {
+            var emptyDeviations = new List<DtwDeviationSegment>();
+            if (frames == null || frames.Count < 2)
+                return (0f, emptyDeviations, 0f);
+
             var studentSeq = new List<float[]>();
             var teacherSeq = new List<float[]>();
+            var validFrames = new List<FrameEvaluationResult>();
 
             foreach (var fr in frames)
             {
                 float[] sv = ExtractPoseVector(fr, useStudent: true);
                 float[] tv = ExtractPoseVector(fr, useStudent: false);
 
-                // Chỉ thêm frame khi cả student lẫn teacher đều có đủ dữ liệu khớp
                 if (sv != null && tv != null)
                 {
                     studentSeq.Add(sv);
                     teacherSeq.Add(tv);
+                    validFrames.Add(fr);
                 }
             }
 
             if (studentSeq.Count < 2 || teacherSeq.Count < 2)
-                return 0f;
+                return (0f, emptyDeviations, 0f);
 
-            // Chạy DTW và chuyển cost → accuracy %
-            float dtwCost = ComputeDtw(studentSeq, teacherSeq);
-            float accuracy = CostToAccuracy(dtwCost, studentSeq.Count);
+            // Chạy DTW và trích xuất Warping Path
+            var (rawCost, path) = ComputeDtwWithPath(studentSeq, teacherSeq);
+            float accuracy = CostToAccuracy(rawCost, studentSeq.Count);
 
-            Debug.Log($"[DtwScorer] Frames used: {studentSeq.Count}, DTW cost: {dtwCost:F3}, DTW accuracy: {accuracy:F1}%");
-            return accuracy;
+            // Phân tích sai lệch từ Warping Path
+            var (deviations, avgDrift) = AnalyzeDeviationsFromWarpingPath(path, validFrames, studentSeq, teacherSeq, fps);
+
+            Debug.Log($"[DtwScorer] DTW Done! Frames: {studentSeq.Count}, Accuracy: {accuracy:F1}%, Avg Drift: {avgDrift:F2}s, Deviations found: {deviations.Count}");
+            return (accuracy, deviations, avgDrift);
+        }
+
+        /// <summary>
+        /// Thuật toán DTW chuẩn với Sakoe-Chiba band kết hợp lưu ma trận để truy vết Warping Path.
+        /// </summary>
+        private static (float normalizedCost, List<(int studentIdx, int teacherIdx)> warpingPath) ComputeDtwWithPath(List<float[]> seq1, List<float[]> seq2)
+        {
+            int n = seq1.Count;
+            int m = seq2.Count;
+            int band = Mathf.Max(1, Mathf.RoundToInt(Mathf.Max(n, m) * SAKOE_CHIBA_RATIO));
+
+            float[,] dtw = new float[n, m];
+
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < m; j++)
+                    dtw[i, j] = float.MaxValue;
+
+            dtw[0, 0] = EuclideanDistance(seq1[0], seq2[0]);
+
+            for (int i = 1; i < n && i <= band; i++)
+                dtw[i, 0] = dtw[i - 1, 0] + EuclideanDistance(seq1[i], seq2[0]);
+
+            for (int j = 1; j < m && j <= band; j++)
+                dtw[0, j] = dtw[0, j - 1] + EuclideanDistance(seq1[0], seq2[j]);
+
+            for (int i = 1; i < n; i++)
+            {
+                int jStart = Mathf.Max(1, i - band);
+                int jEnd   = Mathf.Min(m - 1, i + band);
+
+                for (int j = jStart; j <= jEnd; j++)
+                {
+                    float cost = EuclideanDistance(seq1[i], seq2[j]);
+                    float prev = Mathf.Min(dtw[i - 1, j],
+                                 Mathf.Min(dtw[i, j - 1],
+                                           dtw[i - 1, j - 1]));
+
+                    dtw[i, j] = cost + (prev == float.MaxValue ? cost : prev);
+                }
+            }
+
+            float finalCost = dtw[n - 1, m - 1];
+            if (finalCost == float.MaxValue) finalCost = 999f;
+            float normalizedCost = finalCost / (n + m);
+
+            // Backtracking để tìm Warping Path từ (n-1, m-1) về (0, 0)
+            var path = new List<(int, int)>();
+            int curI = n - 1;
+            int curJ = m - 1;
+            path.Add((curI, curJ));
+
+            while (curI > 0 || curJ > 0)
+            {
+                if (curI == 0)
+                {
+                    curJ--;
+                }
+                else if (curJ == 0)
+                {
+                    curI--;
+                }
+                else
+                {
+                    float diag = dtw[curI - 1, curJ - 1];
+                    float up   = dtw[curI - 1, curJ];
+                    float left = dtw[curI, curJ - 1];
+
+                    if (diag <= up && diag <= left)
+                    {
+                        curI--;
+                        curJ--;
+                    }
+                    else if (up <= left)
+                    {
+                        curI--;
+                    }
+                    else
+                    {
+                        curJ--;
+                    }
+                }
+                path.Add((curI, curJ));
+            }
+
+            path.Reverse();
+            return (normalizedCost, path);
+        }
+
+        /// <summary>
+        /// Phân tích Warping Path để phân loại các phân đoạn lệch nhịp (Timing Drift) và lệch tư thế (Posture Mismatch).
+        /// </summary>
+        private static (List<DtwDeviationSegment> segments, float avgDrift) AnalyzeDeviationsFromWarpingPath(
+            List<(int sIdx, int tIdx)> path,
+            List<FrameEvaluationResult> frames,
+            List<float[]> seq1,
+            List<float[]> seq2,
+            float fps)
+        {
+            var segments = new List<DtwDeviationSegment>();
+            if (path == null || path.Count == 0) return (segments, 0f);
+
+            float totalDrift = 0f;
+            int count = 0;
+
+            // Đánh giá từng điểm trong warping path
+            var pointStates = new List<(float time, float offset, float dist, int severity, string type, string topJoint)>();
+
+            foreach (var (sIdx, tIdx) in path)
+            {
+                if (sIdx >= frames.Count) continue;
+                float timeS = frames[sIdx].timestamp;
+                float timeT = (tIdx < frames.Count) ? frames[tIdx].timestamp : (tIdx / fps);
+
+                float timeOffset = timeS - timeT; // > 0: trễ nhịp (học viên đi sau mẫu), < 0: sớm nhịp
+                totalDrift += Mathf.Abs(timeOffset);
+                count++;
+
+                float dist = (sIdx < seq1.Count && tIdx < seq2.Count) ? EuclideanDistance(seq1[sIdx], seq2[tIdx]) : 0f;
+
+                int severity = 0; // 0 = Good, 1 = Minor, 2 = Severe
+                string type = "Khớp nhịp";
+
+                if (dist > 1.0f)
+                {
+                    severity = 2;
+                    type = "Sai động tác";
+                }
+                else if (timeOffset > 0.35f)
+                {
+                    severity = 2;
+                    type = "Trễ nhịp";
+                }
+                else if (timeOffset < -0.35f)
+                {
+                    severity = 2;
+                    type = "Vội nhịp";
+                }
+                else if (timeOffset > 0.18f)
+                {
+                    severity = 1;
+                    type = "Chậm nhịp nhẹ";
+                }
+                else if (timeOffset < -0.18f)
+                {
+                    severity = 1;
+                    type = "Sớm nhịp nhẹ";
+                }
+                else if (dist > 0.65f)
+                {
+                    severity = 1;
+                    type = "Lệch tư thế";
+                }
+
+                // Tìm khớp sai nhiều nhất trong frame
+                string maxErrorJoint = "";
+                float maxJointDiff = 0f;
+                if (frames[sIdx].joints != null)
+                {
+                    foreach (var kvp in frames[sIdx].joints)
+                    {
+                        float d = Vector2.Distance(kvp.Value.studentPos, kvp.Value.teacherPos);
+                        if (d > maxJointDiff)
+                        {
+                            maxJointDiff = d;
+                            maxErrorJoint = kvp.Key;
+                        }
+                    }
+                }
+
+                pointStates.Add((timeS, timeOffset, dist, severity, type, maxErrorJoint));
+            }
+
+            float avgDrift = count > 0 ? (totalDrift / count) : 0f;
+
+            // Nhóm các điểm liên tiếp có cùng trạng thái thành Segment
+            if (pointStates.Count == 0) return (segments, avgDrift);
+
+            int segStart = 0;
+            for (int i = 1; i <= pointStates.Count; i++)
+            {
+                bool isEnd = (i == pointStates.Count);
+                bool stateChanged = !isEnd && (pointStates[i].severity != pointStates[segStart].severity || pointStates[i].type != pointStates[segStart].type);
+
+                if (isEnd || stateChanged)
+                {
+                    int segEndIdx = i - 1;
+                    float startT = pointStates[segStart].time;
+                    float endT = pointStates[segEndIdx].time;
+
+                    // Chỉ gom nếu đoạn kéo dài ít nhất 0.25s hoặc là đoạn kết thúc
+                    if (endT - startT >= 0.25f || isEnd)
+                    {
+                        float sumOffset = 0f;
+                        float sumDist = 0f;
+                        var jointCounts = new Dictionary<string, int>();
+
+                        for (int k = segStart; k <= segEndIdx; k++)
+                        {
+                            sumOffset += pointStates[k].offset;
+                            sumDist += pointStates[k].dist;
+                            string jn = pointStates[k].topJoint;
+                            if (!string.IsNullOrEmpty(jn))
+                            {
+                                if (!jointCounts.ContainsKey(jn)) jointCounts[jn] = 0;
+                                jointCounts[jn]++;
+                            }
+                        }
+
+                        int len = (segEndIdx - segStart + 1);
+                        float avgOffset = sumOffset / len;
+                        float avgDist = sumDist / len;
+
+                        string prominentJoint = "";
+                        int maxJc = 0;
+                        foreach (var kv in jointCounts)
+                        {
+                            if (kv.Value > maxJc)
+                            {
+                                maxJc = kv.Value;
+                                prominentJoint = kv.Key;
+                            }
+                        }
+
+                        string desc = "";
+                        string typeStr = pointStates[segStart].type;
+                        int sev = pointStates[segStart].severity;
+
+                        if (sev == 0)
+                        {
+                            desc = "Đúng nhịp và đúng tư thế chuẩn xác.";
+                        }
+                        else if (typeStr.Contains("nhịp"))
+                        {
+                            desc = $"{typeStr} khoảng {Mathf.Abs(avgOffset):F2}s so với giáo viên.";
+                        }
+                        else
+                        {
+                            string jointVn = TranslateJoint(prominentJoint);
+                            desc = $"Lệch góc tư thế ở {jointVn}, biên độ chưa đạt.";
+                        }
+
+                        segments.Add(new DtwDeviationSegment
+                        {
+                            startTime = startT,
+                            endTime = endT,
+                            deviationType = typeStr,
+                            timeOffsetSeconds = avgOffset,
+                            spatialDistance = avgDist,
+                            severity = sev,
+                            primaryJoint = prominentJoint,
+                            description = desc
+                        });
+                    }
+
+                    segStart = i;
+                }
+            }
+
+            return (segments, avgDrift);
+        }
+
+        private static string TranslateJoint(string j)
+        {
+            switch (j)
+            {
+                case "left_wrist": return "Cổ tay trái";
+                case "right_wrist": return "Cổ tay phải";
+                case "left_elbow": return "Khuỷu tay trái";
+                case "right_elbow": return "Khuỷu tay phải";
+                case "left_shoulder": return "Vai trái";
+                case "right_shoulder": return "Vai phải";
+                case "left_knee": return "Đầu gối trái";
+                case "right_knee": return "Đầu gối phải";
+                case "left_ankle": return "Cổ chân trái";
+                case "right_ankle": return "Cổ chân phải";
+                case "left_hip": return "Hông trái";
+                case "right_hip": return "Hông phải";
+                default: return "Khớp cơ thể";
+            }
         }
 
         // ─────────────────────────────────────────────────────────────

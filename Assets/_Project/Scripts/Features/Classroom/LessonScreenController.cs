@@ -4,11 +4,13 @@ using UnityEngine.UI;
 using UnityEngine.Video;
 using TMPro;
 using DanceUp.Core;
+using DanceUp.Features.ImportEvaluation;
 
 namespace DanceUp.Features.Classroom
 {
     /// <summary>
-    /// Điều khiển màn hình LessonScreen: Nhận video bài học từ Inspector và kích hoạt phiên tập.
+    /// Điều khiển màn hình LessonScreen: Nhận video bài học từ Inspector, kích hoạt phiên tập trực tiếp,
+    /// và hỗ trợ tính năng Đánh giá video bài nhảy ngoại tuyến (Import Video Evaluation).
     /// </summary>
     public class LessonScreenController : MonoBehaviour
     {
@@ -19,6 +21,11 @@ namespace DanceUp.Features.Classroom
         [Header("=== UI COMPONENTS ===")]
         [SerializeField] private Button btnStart;
         [SerializeField] private TMP_Text txtErrorMessage;
+
+        [Header("=== NHẬP & ĐÁNH GIÁ VIDEO NGOẠI TUYẾN ===")]
+        [SerializeField] private Button btnEvaluateExistingVideo;
+        [SerializeField] private VideoImportModalController importModalController;
+        [SerializeField] private VideoAnalysisLoadingController loadingController;
 
         private void Awake()
         {
@@ -33,6 +40,30 @@ namespace DanceUp.Features.Classroom
                         break;
                     }
                 }
+            }
+
+            if (btnEvaluateExistingVideo == null)
+            {
+                var buttons = GetComponentsInChildren<Button>(true);
+                foreach (var b in buttons)
+                {
+                    if (b.name.IndexOf("Evaluate", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        b.name.IndexOf("Import", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        btnEvaluateExistingVideo = b;
+                        break;
+                    }
+                }
+            }
+
+            if (importModalController == null)
+            {
+                importModalController = FindObjectOfType<VideoImportModalController>(true);
+            }
+
+            if (loadingController == null)
+            {
+                loadingController = FindObjectOfType<VideoAnalysisLoadingController>(true);
             }
 
             if (referenceVideoClip == null)
@@ -50,13 +81,68 @@ namespace DanceUp.Features.Classroom
 
             if (btnStart != null)
             {
+                btnStart.onClick.RemoveAllListeners();
                 btnStart.onClick.AddListener(OnStartLessonClicked);
+            }
+
+            if (btnEvaluateExistingVideo != null)
+            {
+                btnEvaluateExistingVideo.onClick.RemoveAllListeners();
+                btnEvaluateExistingVideo.onClick.AddListener(OnEvaluateExistingVideoClicked);
+            }
+
+            if (importModalController != null && loadingController != null)
+            {
+                importModalController.OnStartAnalysisRequested -= HandleStartAnalysisRequested;
+                importModalController.OnStartAnalysisRequested += HandleStartAnalysisRequested;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (importModalController != null)
+            {
+                importModalController.OnStartAnalysisRequested -= HandleStartAnalysisRequested;
             }
         }
 
         public void SetReferenceVideo(VideoClip clip)
         {
             referenceVideoClip = clip;
+        }
+
+        private void OnEvaluateExistingVideoClicked()
+        {
+            if (importModalController == null)
+            {
+                importModalController = FindObjectOfType<VideoImportModalController>(true);
+            }
+
+            if (importModalController != null)
+            {
+                importModalController.OpenModal(lessonTitle, referenceVideoClip);
+            }
+            else
+            {
+                Debug.LogWarning("[LessonScreenController] VideoImportModalController chưa được thiết lập trong Scene!");
+            }
+        }
+
+        private void HandleStartAnalysisRequested(string videoPath, VideoClip teacherClip, string title)
+        {
+            if (loadingController == null)
+            {
+                loadingController = FindObjectOfType<VideoAnalysisLoadingController>(true);
+            }
+
+            if (loadingController != null)
+            {
+                loadingController.StartAnalysis(videoPath, teacherClip, title);
+            }
+            else
+            {
+                Debug.LogWarning("[LessonScreenController] VideoAnalysisLoadingController chưa được thiết lập trong Scene!");
+            }
         }
 
         private void OnStartLessonClicked()

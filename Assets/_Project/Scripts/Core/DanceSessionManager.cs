@@ -221,6 +221,27 @@ namespace DanceUp.Core
             }
         }
 
+        /// <summary>
+        /// Hiển thị kết quả đánh giá từ luồng phân tích video ngoại tuyến (Import Video).
+        /// </summary>
+        public void DisplayImportedVideoResults(SessionEvaluationData sessionData)
+        {
+            if (sessionData == null) return;
+            lastSessionData = sessionData;
+            State = SessionState.Evaluating;
+
+            EnsureEvaluationScreenExists();
+
+            if (evaluationScreen != null)
+            {
+                evaluationScreen.gameObject.SetActive(true);
+                evaluationScreen.transform.SetAsLastSibling();
+                evaluationScreen.DisplayResults(sessionData);
+            }
+
+            Debug.Log($"[DanceSessionManager] Hiển thị kết quả video ngoại tuyến! DTW: {sessionData.dtwAccuracy:F1}%, Overall: {sessionData.overallAccuracy:F1}%");
+        }
+
         public void RetryPractice()
         {
             if (cameraRecapScreen != null)
@@ -435,7 +456,7 @@ namespace DanceUp.Core
             return data;
         }
 
-        private void CalculateSevenSkills(SessionEvaluationData data, List<FrameEvaluationResult> frames, Dictionary<string, int> errorCounts)
+        public static void CalculateSevenSkills(SessionEvaluationData data, List<FrameEvaluationResult> frames, Dictionary<string, int> errorCounts)
         {
             float baseAcc = data.overallAccuracy;
             int totalFrames = Mathf.Max(1, frames.Count);
@@ -488,13 +509,13 @@ namespace DanceUp.Core
             data.skillDeltas["Năng lượng"] = 9f;
         }
 
-        private int GetErrorCount(Dictionary<string, int> dict, string key)
+        private static int GetErrorCount(Dictionary<string, int> dict, string key)
         {
             int val;
             return dict != null && dict.TryGetValue(key, out val) ? val : 0;
         }
 
-        private void ApplyPlayerPrefsData(SessionEvaluationData data)
+        public static void ApplyPlayerPrefsData(SessionEvaluationData data)
         {
             string lessonKey = string.IsNullOrEmpty(data.lessonTitle) ? "DEFAULT_LESSON" : data.lessonTitle.Replace(" ", "_");
 

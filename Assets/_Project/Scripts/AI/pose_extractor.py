@@ -138,8 +138,243 @@ class PoseDetector:
             return None
 
 
+def run_analyze_video(args, detector):
+    """Processes an offline video file frame-by-frame and outputs MediaPipe pose keypoints to JSON."""
+    if not args.video or not os.path.exists(args.video):
+        print(f"[Error] Video file not found: {args.video}", flush=True)
+        sys.exit(1)
+
+    out_json = args.output_json or os.path.splitext(args.video)[0] + "_pose.json"
+    print(f"[PoseExtractor] Analyzing video: {args.video}", flush=True)
+    print(f"[PoseExtractor] Output JSON will be saved to: {out_json}", flush=True)
+
+    cap = cv2.VideoCapture(args.video)
+    if not cap.isOpened():
+        print(f"[Error] Could not open video file: {args.video}", flush=True)
+        sys.exit(1)
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0 or np.isnan(fps):
+        fps = 30.0
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    print(f"[PoseExtractor] Video Info: {width}x{height} | {fps:.1f} FPS | Total frames: {total_frames}", flush=True)
+
+    analyzed_frames = []
+    frame_idx = 0
+    start_time = time.time()
+
+    while True:
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            break
+
+        frame_idx += 1
+        t_sec = round((frame_idx - 1) / fps, 4)
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        landmarks = detector.detect(rgb_frame)
+
+        student_joints = {}
+        if landmarks:
+            for joint_name, idx in LANDMARKS_MAP.items():
+                if idx < len(landmarks):
+                    lm = landmarks[idx]
+                    unity_x = float(np.clip(lm.x, 0.0, 1.0))
+                    unity_y = float(np.clip(1.0 - lm.y, 0.0, 1.0))
+                    vis = float(getattr(lm, 'visibility', 1.0))
+
+                    student_joints[joint_name] = {
+                        "x": round(unity_x, 4),
+                        "y": round(unity_y, 4),
+                        "visibility": round(vis, 3),
+                        "is_pass": 1
+                    }
+
+        frame_data = {
+            "frame_index": frame_idx - 1,
+            "timestamp": t_sec,
+            "pose_detected": bool(landmarks is not None and len(student_joints) >= 6),
+            "student_joints": student_joints
+        }
+        analyzed_frames.append(frame_data)
+
+        # Print progress for Unity tracking
+        if frame_idx % 10 == 0 or frame_idx == total_frames:
+            pct = (frame_idx / max(1, total_frames)) * 100.0
+            print(f"PROGRESS:{pct:.1f} ({frame_idx}/{total_frames})", flush=True)
+
+    cap.release()
+    elapsed = time.time() - start_time
+
+    output_data = {
+        "video_path": os.path.abspath(args.video),
+        "total_frames": len(analyzed_frames),
+        "fps": fps,
+        "duration": round(len(analyzed_frames) / fps, 2),
+        "width": width,
+        "height": height,
+        "processed_time_seconds": round(elapsed, 2),
+        "frames": analyzed_frames
+    }
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_json)), exist_ok=True)
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, ensure_ascii=False, indent=2)
+
+    print(f"ANALYSIS_COMPLETE:{out_json}", flush=True)
+    print(f"[PoseExtractor] Successfully analyzed {len(analyzed_frames)} frames in {elapsed:.1f}s.", flush=True)
+
+
+def run_export_video(args):
+    """Renders the analyzed video with 2D skeleton overlay, color-coded joints, and score HUD."""
+    if not args.video or not os.path.exists(args.video):
+        print(f"[Error] Input video file not found: {args.video}", flush=True)
+        sys.exit(1)
+
+    analysis_file = args.analysis
+    if not analysis_file or not os.path.exists(analysis_file):
+        # Look for default analysis file
+        candidate = os.path.splitext(args.video)[0] + "_pose.json"
+        if os.path.exists(candidate):
+            analysis_file = candidate
+        else:
+            print(f"[Error] Analysis JSON not found: {analysis_file}", flush=True)
+            sys.exit(1)
+
+    out_video = args.output_video
+    if not out_video:
+        out_video = os.path.splitext(args.video)[0] + "_skeleton_export.mp4"
+
+    print(f"[PoseExtractor] Exporting video with skeleton overlay...", flush=True)
+    print(f"  Input:    {args.video}", flush=True)
+    print(f"  Analysis: {analysis_file}", flush=True)
+    print(f"  Output:   {out_video}", flush=True)
+
+    with open(analysis_file, "r", encoding="utf-8") as f:
+        analysis_data = json.load(f)
+
+    frame_map = {}
+    frames_list = analysis_data.get("frames") or analysis_data.get("frameResults") or []
+    for f in frames_list:
+        f_idx = f.get("frame_index", f.get("frameIndex", -1))
+        if f_idx >= 0:
+            frame_map[f_idx] = f
+
+    overall_acc = analysis_data.get("overallAccuracy", 84.0)
+
+    cap = cv2.VideoCapture(args.video)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_video)), exist_ok=True)
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(out_video, fourcc, fps, (width, height))
+
+    frame_idx = 0
+    color_pass = (76, 230, 16)      # Neon Green BGR
+    color_error = (102, 51, 255)    # Neon Red BGR
+    color_cyan = (255, 180, 0)      # DanceUp Cyan BGR
+
+    while True:
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            break
+
+        f_data = frame_map.get(frame_idx)
+        student_joints = {}
+        joints_eval = {}
+
+        if f_data:
+            sj = f_data.get("student_joints") or f_data.get("joints") or {}
+            for j_name, j_val in sj.items():
+                if isinstance(j_val, dict):
+                    student_joints[j_name] = j_val
+                    # Check pass/fail status
+                    is_pass = j_val.get("is_pass", j_val.get("isPass", 1))
+                    joints_eval[j_name] = is_pass
+
+        # 1. Draw Skeleton Bones
+        for j1, j2 in SKELETON_BONES:
+            if j1 in student_joints and j2 in student_joints:
+                p1_data = student_joints[j1]
+                p2_data = student_joints[j2]
+
+                p1_x = p1_data.get("x", p1_data.get("studentPos", {}).get("x", 0))
+                p1_y = p1_data.get("y", p1_data.get("studentPos", {}).get("y", 0))
+                p2_x = p2_data.get("x", p2_data.get("studentPos", {}).get("x", 0))
+                p2_y = p2_data.get("y", p2_data.get("studentPos", {}).get("y", 0))
+
+                # Convert normalized Unity (0 at bottom) to OpenCV pixel (0 at top)
+                pt1 = (int(p1_x * width), int((1.0 - p1_y) * height))
+                pt2 = (int(p2_x * width), int((1.0 - p2_y) * height))
+
+                both_pass = (joints_eval.get(j1, 1) == 1 and joints_eval.get(j2, 1) == 1)
+                bone_color = color_pass if both_pass else color_error
+                thickness = 4 if both_pass else 5
+
+                cv2.line(frame, pt1, pt2, bone_color, thickness, cv2.LINE_AA)
+
+        # 2. Draw Skeleton Joints
+        for j_name, j_val in student_joints.items():
+            jx = j_val.get("x", j_val.get("studentPos", {}).get("x", 0))
+            jy = j_val.get("y", j_val.get("studentPos", {}).get("y", 0))
+            pt = (int(jx * width), int((1.0 - jy) * height))
+
+            is_pass = joints_eval.get(j_name, 1)
+            j_color = color_pass if is_pass == 1 else color_error
+            radius = 7 if is_pass == 1 else 10
+
+            cv2.circle(frame, pt, radius, j_color, -1, cv2.LINE_AA)
+            cv2.circle(frame, pt, radius + 2, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # 3. Draw Sleek Top HUD Banner
+        hud_overlay = frame.copy()
+        cv2.rectangle(hud_overlay, (0, 0), (width, 70), (15, 20, 35), -1)
+        cv2.addWeighted(hud_overlay, 0.75, frame, 0.25, 0, frame)
+
+        t_sec = frame_idx / fps
+        time_str = f"{int(t_sec // 60):02d}:{int(t_sec % 60):02d}.{int((t_sec % 1) * 10)}"
+
+        # HUD Texts
+        cv2.putText(frame, "DanceUp AI Coach", (20, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, color_cyan, 2, cv2.LINE_AA)
+        cv2.putText(frame, f"Time: {time_str} | Frame: {frame_idx}/{total_frames}", (20, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA)
+
+        # Accuracy Badge
+        badge_text = f"Accuracy: {overall_acc:.0f}%"
+        cv2.putText(frame, badge_text, (width - 220, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_pass, 2, cv2.LINE_AA)
+
+        out.write(frame)
+        frame_idx += 1
+
+        if frame_idx % 20 == 0 or frame_idx == total_frames:
+            pct = (frame_idx / max(1, total_frames)) * 100.0
+            print(f"EXPORT_PROGRESS:{pct:.1f} ({frame_idx}/{total_frames})", flush=True)
+
+    cap.release()
+    out.release()
+
+    print(f"EXPORT_COMPLETE:{out_video}", flush=True)
+    print(f"[PoseExtractor] Exported {frame_idx} frames with skeleton overlay to: {out_video}", flush=True)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="MediaPipe Pose Extractor to Unity UDP")
+    parser = argparse.ArgumentParser(description="MediaPipe Pose Extractor and Dance Video Analyzer")
+    parser.add_argument("--mode", default="stream", choices=["stream", "analyze_video", "export_video"],
+                        help="Mode: stream (Webcam UDP), analyze_video (Offline video analysis), export_video (Render skeleton on video)")
+    parser.add_argument("--video", default="", help="Input video file path for analyze_video or export_video")
+    parser.add_argument("--output-json", default="", help="Path for saving analysis JSON")
+    parser.add_argument("--analysis", default="", help="Path to analysis JSON for export_video")
+    parser.add_argument("--output-video", default="", help="Path for saving exported MP4 video")
     parser.add_argument("--ip", default="127.0.0.1", help="Target UDP IP (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=5065, help="Target UDP Port (default: 5065)")
     parser.add_argument("--cam", type=int, default=0, help="Webcam device index (default: 0)")
@@ -150,6 +385,17 @@ def main():
     parser.add_argument("--stream-image", action="store_true", default=True, help="Stream compressed JPEG camera frame to Unity")
     args = parser.parse_args()
 
+    # Route based on mode
+    if args.mode == "analyze_video":
+        detector = PoseDetector()
+        run_analyze_video(args, detector)
+        return
+
+    if args.mode == "export_video":
+        run_export_video(args)
+        return
+
+    # Default Mode: Live Stream (Option B)
     mirror = not args.no_mirror
 
     print("=" * 60, flush=True)

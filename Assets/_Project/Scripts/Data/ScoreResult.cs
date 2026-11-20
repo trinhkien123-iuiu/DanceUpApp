@@ -40,6 +40,19 @@ namespace DanceUp.Data
     }
 
     [Serializable]
+    public class DtwDeviationSegment
+    {
+        public float startTime;
+        public float endTime;
+        public string deviationType; // "Sớm nhịp", "Trễ nhịp", "Lệch tư thế", "Khớp nhịp"
+        public float timeOffsetSeconds; // > 0: trễ nhịp, < 0: sớm nhịp
+        public float spatialDistance;
+        public string primaryJoint;
+        public string description;
+        public int severity; // 0 = Good (Xanh), 1 = Minor drift (Vàng), 2 = Severe mismatch (Đỏ)
+    }
+
+    [Serializable]
     public class SessionEvaluationData
     {
         public string lessonTitle = "HIP HOP BASIC • ARM GROOVE";
@@ -63,8 +76,15 @@ namespace DanceUp.Data
         // Incorrect temporal sections
         public List<IncorrectSectionInfo> incorrectSections = new List<IncorrectSectionInfo>();
 
+        // DTW Temporal & Movement Deviations
+        public List<DtwDeviationSegment> dtwDeviations = new List<DtwDeviationSegment>();
+        public float dtwTimeDriftSeconds = 0f;
+        public string analyzedVideoPath = "";
+        public bool isImportedVideo = false;
+
         // List of all frame results
         public List<FrameEvaluationResult> frameResults = new List<FrameEvaluationResult>();
+        public List<FrameEvaluationResult> frames { get => frameResults; set => frameResults = value; }
 
         // Session status & warnings (Option A)
         public bool isSessionTooShort = false;
