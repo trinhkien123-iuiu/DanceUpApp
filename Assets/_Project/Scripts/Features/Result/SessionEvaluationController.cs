@@ -119,6 +119,34 @@ namespace DanceUp.Features.Result
         private void OnEnable()
         {
             BindButtons();
+            ScrollToTop();
+        }
+
+        /// <summary>
+        /// Đưa danh sách kết quả về đầu trang. Gọi mỗi khi màn hiện ra / nạp dữ liệu mới,
+        /// vì ScrollRect giữ nguyên vị trí cuộn cũ và nội dung đổi chiều cao sau khi đổ dữ liệu.
+        /// </summary>
+        public void ScrollToTop()
+        {
+            var scroll = GetComponentInChildren<ScrollRect>(true);
+            if (scroll == null) return;
+
+            scroll.StopMovement();
+            if (scroll.content != null) LayoutRebuilder.ForceRebuildLayoutImmediate(scroll.content);
+            Canvas.ForceUpdateCanvases();
+            scroll.verticalNormalizedPosition = 1f;
+
+            // Layout (ContentSizeFitter, thẻ DTW co giãn) có thể tính lại ở frame sau → cuộn lại lần nữa
+            if (isActiveAndEnabled) StartCoroutine(ScrollToTopNextFrame(scroll));
+        }
+
+        private System.Collections.IEnumerator ScrollToTopNextFrame(ScrollRect scroll)
+        {
+            yield return null;
+            if (scroll == null) yield break;
+            Canvas.ForceUpdateCanvases();
+            scroll.StopMovement();
+            scroll.verticalNormalizedPosition = 1f;
         }
 
         private void BindButtons()
@@ -409,6 +437,9 @@ namespace DanceUp.Features.Result
 
             // 10. Biểu đồ (nếu có container)
             RenderAccuracyGraph(data.accuracyOverTime);
+
+            // 11. Luôn mở màn kết quả ở đầu trang
+            ScrollToTop();
         }
 
         private void UpdateDtwCard(SessionEvaluationData data)
@@ -563,86 +594,79 @@ namespace DanceUp.Features.Result
             }
 
             var segments = data.dtwDeviations;
-            if (segments == null || segments.Count == 0) return;
+            if (segments == null || segments.Count == 0)
+            {
+                FitDtwCardHeight(0);
+                return;
+            }
 
             TMP_FontAsset font = txtTopErrors != null ? txtTopErrors.font : (txtTitle != null ? txtTitle.font : null);
 
+            // Dùng lại sprite bo góc của nền thẻ cho từng hàng
+            Image cardBg = deviationSegmentsListContainer.parent != null ? deviationSegmentsListContainer.parent.GetComponent<Image>() : null;
+            Sprite rowSprite = cardBg != null ? cardBg.sprite : null;
+
             int count = 0;
+            int created = 0;
             foreach (var seg in segments)
             {
                 if (seg.severity == 0 && count > 0) continue; // Ưu tiên các đoạn có lỗi
                 count++;
                 if (count > 3) break;
+                created++;
 
-                var itemObj = new GameObject("Item_" + seg.startTime.ToString("F1"), typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+                // Hàng 2 dòng: [mốc thời gian ........ Xem lại] / [mô tả]
+                var itemObj = new GameObject("Item_" + seg.startTime.ToString("F1"), typeof(RectTransform), typeof(Image), typeof(LayoutElement));
                 itemObj.transform.SetParent(deviationSegmentsListContainer, false);
                 var iRect = itemObj.GetComponent<RectTransform>();
-                iRect.sizeDelta = new Vector2(0f, 32f);
+                iRect.sizeDelta = new Vector2(0f, DtwRowHeight);
 
                 var iLe = itemObj.GetComponent<LayoutElement>();
-                iLe.minHeight = 32f;
-                iLe.preferredHeight = 32f;
+                iLe.minHeight = DtwRowHeight;
+                iLe.preferredHeight = DtwRowHeight;
                 iLe.flexibleWidth = 1f;
 
                 var img = itemObj.GetComponent<Image>();
                 img.color = new Color(0.95f, 0.965f, 0.98f, 1f); // #F1F5F9 Light Gray
+                if (rowSprite != null)
+                {
+                    img.sprite = rowSprite;
+                    img.type = Image.Type.Sliced;
+                    img.pixelsPerUnitMultiplier = cardBg.pixelsPerUnitMultiplier * 1.6f;
+                }
 
-                var hlg = itemObj.GetComponent<HorizontalLayoutGroup>();
-                hlg.childControlWidth = true;
-                hlg.childControlHeight = true;
-                hlg.childForceExpandWidth = false;
-                hlg.childForceExpandHeight = true;
-                hlg.padding = new RectOffset(8, 8, 4, 4);
-                hlg.spacing = 6f;
+                Color sevColor = seg.severity == 0 ? new Color(0.067f, 0.478f, 0.318f, 1f) : (seg.severity == 1 ? new Color(0.96f, 0.54f, 0f, 1f) : new Color(0.706f, 0.137f, 0.094f, 1f));
 
-                var timeObj = new GameObject("Txt_Time", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
-                timeObj.transform.SetParent(itemObj.transform, false);
-                var txtTime = timeObj.GetComponent<TextMeshProUGUI>();
-                if (font != null) txtTime.font = font;
-                txtTime.fontSize = 10.5f;
-                txtTime.fontStyle = FontStyles.Bold;
-                txtTime.alignment = TextAlignmentOptions.MidlineLeft;
-                txtTime.color = seg.severity == 0 ? new Color(0.067f, 0.478f, 0.318f, 1f) : (seg.severity == 1 ? new Color(0.96f, 0.54f, 0f, 1f) : new Color(0.706f, 0.137f, 0.094f, 1f));
-                txtTime.text = string.Format("[{0:F1}s - {1:F1}s]", seg.startTime, seg.endTime);
-                var tLe = timeObj.GetComponent<LayoutElement>();
-                tLe.minWidth = 78f;
-                tLe.preferredWidth = 78f;
-                tLe.flexibleWidth = 0f;
+                var txtTime = CreateRowText(itemObj.transform, "Txt_Time", font, 12f, FontStyles.Bold, sevColor,
+                    string.Format("{0:F1}s – {1:F1}s", seg.startTime, seg.endTime));
+                PlaceTopLeft(txtTime.rectTransform, 12f, 8f, 84f, 18f);
 
-                var descObj = new GameObject("Txt_Desc", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
-                descObj.transform.SetParent(itemObj.transform, false);
-                var txtDesc = descObj.GetComponent<TextMeshProUGUI>();
-                if (font != null) txtDesc.font = font;
-                txtDesc.fontSize = 10.5f;
-                txtDesc.alignment = TextAlignmentOptions.MidlineLeft;
-                txtDesc.color = new Color(0.12f, 0.18f, 0.28f, 1f);
-                txtDesc.text = !string.IsNullOrEmpty(seg.description) ? seg.description : (seg.deviationType + " (" + TranslateJoint(seg.primaryJoint) + ")");
+                var txtDesc = CreateRowText(itemObj.transform, "Txt_Desc", font, 12f, FontStyles.Normal, new Color(0.12f, 0.18f, 0.28f, 1f),
+                    !string.IsNullOrEmpty(seg.description) ? seg.description : (seg.deviationType + " (" + TranslateJoint(seg.primaryJoint) + ")"));
+                PlaceTopLeft(txtDesc.rectTransform, 12f, 28f, 84f, 18f);
                 txtDesc.overflowMode = TextOverflowModes.Ellipsis;
-                txtDesc.enableWordWrapping = false;
-                var dLe = descObj.GetComponent<LayoutElement>();
-                dLe.minWidth = 90f;
-                dLe.preferredWidth = 145f;
-                dLe.flexibleWidth = 1f;
 
-                var btnObj = new GameObject("Btn_Review", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+                var btnObj = new GameObject("Btn_Review", typeof(RectTransform), typeof(Image), typeof(Button));
                 btnObj.transform.SetParent(itemObj.transform, false);
                 var bRect = btnObj.GetComponent<RectTransform>();
-                bRect.sizeDelta = new Vector2(62f, 24f);
-                var bLe = btnObj.GetComponent<LayoutElement>();
-                bLe.minWidth = 62f;
-                bLe.preferredWidth = 62f;
-                bLe.flexibleWidth = 0f;
-                btnObj.GetComponent<Image>().color = new Color(0.898f, 0.969f, 1f, 1f); // #E5F7FF
+                bRect.anchorMin = bRect.anchorMax = new Vector2(1f, 0.5f);
+                bRect.pivot = new Vector2(1f, 0.5f);
+                bRect.anchoredPosition = new Vector2(-10f, 0f);
+                bRect.sizeDelta = new Vector2(68f, 30f);
+                var bImg = btnObj.GetComponent<Image>();
+                bImg.color = new Color(0.898f, 0.969f, 1f, 1f); // #E5F7FF
+                if (rowSprite != null)
+                {
+                    bImg.sprite = rowSprite;
+                    bImg.type = Image.Type.Sliced;
+                    bImg.pixelsPerUnitMultiplier = cardBg.pixelsPerUnitMultiplier * 2f;
+                }
 
-                var btnTxtObj = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
-                btnTxtObj.transform.SetParent(btnObj.transform, false);
-                var bTxt = btnTxtObj.GetComponent<TextMeshProUGUI>();
-                if (font != null) bTxt.font = font;
+                var bTxt = CreateRowText(btnObj.transform, "Text", font, 12f, FontStyles.Bold, new Color(0f, 0.435f, 0.620f, 1f), "Xem lại");
                 bTxt.alignment = TextAlignmentOptions.Center;
-                bTxt.fontSize = 10.5f;
-                bTxt.fontStyle = FontStyles.Bold;
-                bTxt.color = new Color(0f, 0.435f, 0.620f, 1f); // #006F9E Cyan Dark
-                bTxt.text = "Xem lại";
+                var btRt = bTxt.rectTransform;
+                btRt.anchorMin = Vector2.zero; btRt.anchorMax = Vector2.one;
+                btRt.offsetMin = Vector2.zero; btRt.offsetMax = Vector2.zero;
 
                 float start = seg.startTime;
                 float end = seg.endTime;
@@ -651,6 +675,57 @@ namespace DanceUp.Features.Result
                     OnReviewSegmentClicked?.Invoke(start, end);
                 });
             }
+
+            FitDtwCardHeight(created);
+        }
+
+        private const float DtwRowHeight = 54f;
+        private const float DtwRowSpacing = 8f;
+        private const float DtwCardBottomPadding = 20f;
+
+        private static TextMeshProUGUI CreateRowText(Transform parent, string name, TMP_FontAsset font, float size, FontStyles style, Color color, string text)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
+            go.transform.SetParent(parent, false);
+            var t = go.GetComponent<TextMeshProUGUI>();
+            if (font != null) t.font = font;
+            t.fontSize = size;
+            t.fontStyle = style;
+            t.color = color;
+            t.alignment = TextAlignmentOptions.MidlineLeft;
+            t.enableWordWrapping = false;
+            t.raycastTarget = false;
+            t.text = text;
+            return t;
+        }
+
+        // Neo trên-trái, kéo giãn ngang (chừa rightInset bên phải cho nút)
+        private static void PlaceTopLeft(RectTransform rt, float left, float top, float rightInset, float height)
+        {
+            rt.anchorMin = new Vector2(0f, 1f);
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = new Vector2(left, -top);
+            rt.sizeDelta = new Vector2(-(left + rightInset), height);
+        }
+
+        // Nới chiều cao thẻ DTW theo số hàng lỗi thực tế (thẻ nằm trong VerticalLayoutGroup)
+        private void FitDtwCardHeight(int rows)
+        {
+            var listRt = deviationSegmentsListContainer as RectTransform;
+            if (cardDtwDeviation == null || listRt == null) return;
+
+            float listH = rows > 0 ? rows * DtwRowHeight + (rows - 1) * DtwRowSpacing : 0f;
+            listRt.sizeDelta = new Vector2(listRt.sizeDelta.x, listH);
+
+            var le = cardDtwDeviation.GetComponent<LayoutElement>();
+            if (le == null) return;
+            float listTop = -listRt.anchoredPosition.y;
+            float h = listTop + listH + DtwCardBottomPadding;
+            le.minHeight = h;
+            le.preferredHeight = h;
+            if (listRt.parent != null && listRt.parent.parent != null)
+                LayoutRebuilder.MarkLayoutForRebuild(listRt.parent.parent as RectTransform);
         }
 
         private void UpdateSkillRows(SessionEvaluationData data)

@@ -552,44 +552,40 @@ namespace DanceUp.Features.Practice
             int totalSeconds = Mathf.Max(1, Mathf.RoundToInt(countdownDuration));
             for (int count = totalSeconds; count >= 1; count--)
             {
-                if (txtCountdown != null)
-                {
-                    txtCountdown.text = count.ToString();
-                    txtCountdown.color = new Color(1f, 0.85f, 0.1f, 1f); // Vàng neon rực rỡ
-                }
+                SetCountdownVisual(count.ToString(), CountdownNumberSize, CountdownDisc, "Chuẩn bị vào tư thế");
 
                 if (txtCoachAdvice != null)
                 {
                     txtCoachAdvice.text = $"Chuẩn bị vào bài tập: {count}...";
                 }
 
-                // Hiệu ứng scale punch từ 1.35x về 1.0x trong 1 giây
+                // Số mới bật lên (phóng to → thu về, mờ → rõ) và vòng tiến độ vơi dần trong 1 giây
                 float elapsed = 0f;
                 while (elapsed < 1.0f)
                 {
                     elapsed += Time.deltaTime;
-                    if (txtCountdown != null)
-                    {
-                        float scale = Mathf.Lerp(1.35f, 1.0f, elapsed / 1.0f);
-                        txtCountdown.transform.localScale = new Vector3(scale, scale, 1f);
-                    }
+                    float t = Mathf.Clamp01(elapsed);
+                    AnimateCountdownPop(t);
+                    if (countdownRing != null) countdownRing.fillAmount = 1f - t;
                     yield return null;
                 }
             }
 
-            // Hiệu ứng "BẮT ĐẦU!"
-            if (txtCountdown != null)
-            {
-                txtCountdown.text = "BẮT ĐẦU!";
-                txtCountdown.color = new Color(0.1f, 0.95f, 0.35f, 1f); // Xanh lá sáng
-                txtCountdown.transform.localScale = Vector3.one * 1.1f;
-            }
+            // "Bắt đầu!" – vòng tròn chuyển sang nền cyan đặc
+            SetCountdownVisual("Bắt đầu!", CountdownStartSize, CountdownAccent, "Nhảy theo video mẫu nào!");
+            if (countdownRing != null) countdownRing.fillAmount = 1f;
             if (txtCoachAdvice != null)
             {
                 txtCoachAdvice.text = "Bắt đầu nhảy theo mẫu giáo viên!";
             }
 
-            yield return new WaitForSeconds(0.6f);
+            float startElapsed = 0f;
+            while (startElapsed < 0.7f)
+            {
+                startElapsed += Time.deltaTime;
+                AnimateCountdownPop(Mathf.Clamp01(startElapsed / 0.7f));
+                yield return null;
+            }
 
             // 3. Kết thúc đếm ngược, chính thức kích hoạt video mẫu và bắt đầu bài tập đồng thời
             if (countdownContainer != null) countdownContainer.SetActive(false);
@@ -1040,15 +1036,66 @@ namespace DanceUp.Features.Practice
             }
         }
 
+        // ── Giao diện đếm ngược: huy hiệu tròn + vòng tiến độ (dựng sẵn trong PracticeScreen.prefab/CountdownOverlay) ──
+        private const float CountdownNumberSize = 96f;
+        private const float CountdownStartSize = 34f;
+        private static readonly Color CountdownDisc = new Color(0.051f, 0.106f, 0.165f, 0.92f);   // navy #0D1B2A
+        private static readonly Color CountdownAccent = new Color(0f, 0.706f, 1f, 1f);            // cyan #00B4FF
+
+        private Image countdownRing;
+        private Image countdownDisc;
+        private TMP_Text countdownCaption;
+        private RectTransform countdownBadge;
+
+        private void CacheCountdownParts()
+        {
+            if (countdownContainer == null) return;
+            var root = countdownContainer.transform;
+            countdownBadge = root.Find("Badge") as RectTransform;
+            countdownRing = root.Find("Badge/Ring")?.GetComponent<Image>();
+            countdownDisc = root.Find("Badge/Disc")?.GetComponent<Image>();
+            countdownCaption = root.Find("Caption")?.GetComponent<TMP_Text>();
+            var number = root.Find("Badge/Text_Countdown")?.GetComponent<TMP_Text>();
+            if (number != null) txtCountdown = number;
+        }
+
+        private void SetCountdownVisual(string text, float size, Color discColor, string caption)
+        {
+            if (txtCountdown != null)
+            {
+                txtCountdown.text = text;
+                txtCountdown.fontSize = size;
+                txtCountdown.color = Color.white;
+            }
+            if (countdownDisc != null) countdownDisc.color = discColor;
+            if (countdownCaption != null) countdownCaption.text = caption;
+        }
+
+        // t: 0→1 trong một nhịp. Bật lên nhanh ở 35% đầu (ease-out), chữ rõ dần ở 20% đầu.
+        private void AnimateCountdownPop(float t)
+        {
+            float k = Mathf.Clamp01(t / 0.35f);
+            float ease = 1f - Mathf.Pow(1f - k, 3f);
+            float scale = Mathf.Lerp(1.25f, 1f, ease);
+            var target = countdownBadge != null ? (Transform)countdownBadge : (txtCountdown != null ? txtCountdown.transform : null);
+            if (target != null) target.localScale = new Vector3(scale, scale, 1f);
+            if (txtCountdown != null) txtCountdown.alpha = Mathf.Clamp01(t / 0.2f);
+        }
+
         private void EnsureCountdownUI()
         {
-            if (countdownContainer != null && txtCountdown != null) return;
+            if (countdownContainer != null && txtCountdown != null)
+            {
+                if (countdownBadge == null) CacheCountdownParts();
+                return;
+            }
 
             var existing = transform.Find("CountdownOverlay");
             if (existing != null)
             {
                 countdownContainer = existing.gameObject;
                 txtCountdown = existing.GetComponentInChildren<TMP_Text>(true);
+                CacheCountdownParts();
                 return;
             }
 

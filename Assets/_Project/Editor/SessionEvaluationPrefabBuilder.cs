@@ -15,7 +15,7 @@ namespace DanceUp.Editor
         private const string ResourcesPath = "Assets/Resources/SessionEvaluationScreen.prefab";
 
         [MenuItem("Tools/DanceUp/Build SessionEvaluationScreen Prefab")]
-        [InitializeOnLoadMethod]
+        // [InitializeOnLoadMethod] – đã tắt: tự dựng lại prefab mỗi lần compile làm chậm editor và tạo thay đổi rác trong git. Chạy tay qua menu khi cần.
         public static void GeneratePrefab()
         {
             // Kiểm tra nếu prefab đã tồn tại và hợp lệ thì không cần tạo lại liên tục
