@@ -13,7 +13,7 @@ namespace DanceUp.AI
     {
         [Header("=== CẤU HÌNH MÔ HÌNH ML ===")]
         [SerializeField] private TextAsset onnxModelAsset;
-        [SerializeField] private float frameScoreThreshold = 7.1f; // Ngưỡng đạt từ processing_11
+        [SerializeField] private float frameScoreThreshold = 8.1f; // Ngưỡng đạt từ processing_11_ver1 (T* = 8.1) từ processing_11
         [SerializeField] private float visibilityThreshold = 0.5f;
 
         public static readonly string[] JOINTS = new string[]
@@ -35,7 +35,7 @@ namespace DanceUp.AI
         private int totalEvaluatedFrames = 0;
         private readonly List<Dictionary<string, Vector2>> recentPosesWindow = new List<Dictionary<string, Vector2>>();
         private const int MOMENTUM_WINDOW_SIZE = 15;
-        private const float MOMENTUM_VARIANCE_THRESHOLD = 0.015f; // Ngưỡng chặn video tĩnh từ processing_11
+        private const float MOMENTUM_VARIANCE_THRESHOLD = 0.020f; // Ngưỡng chặn video tĩnh từ processing_11_ver1từ processing_11
 
         private void Awake()
         {
@@ -121,42 +121,36 @@ namespace DanceUp.AI
         }
 
         /// <summary>
-        /// Chuẩn hóa tọa độ dựa trên độ dài thân người (Torso Scaling - processing_11).
+        /// Chuẩn hóa tọa độ dựa trên độ dài thân người 2D (Torso Scaling - processing_11_ver1).
         /// </summary>
         public Dictionary<string, Vector2> NormalizePose(Dictionary<string, Vector2> rawJoints)
-{
-    var normalized = new Dictionary<string, Vector2>();
-    if (rawJoints == null) return normalized;
+        {
+            var normalized = new Dictionary<string, Vector2>();
+            if (rawJoints == null) return normalized;
 
-    // Kiểm tra xem có đủ 4 khớp cốt lõi không để tránh lệch tâm do Vector2.zero
-    if (!rawJoints.TryGetValue("left_hip", out Vector2 lHip) ||
-        !rawJoints.TryGetValue("right_hip", out Vector2 rHip) ||
-        !rawJoints.TryGetValue("left_shoulder", out Vector2 lSh) ||
-        !rawJoints.TryGetValue("right_shoulder", out Vector2 rSh))
-    {
-        return normalized; 
-    }
+            // Kiểm tra xem có đủ 4 khớp cốt lõi không để tránh lệch tâm do Vector2.zero
+            if (!rawJoints.TryGetValue("left_hip", out Vector2 lHip) ||
+                !rawJoints.TryGetValue("right_hip", out Vector2 rHip) ||
+                !rawJoints.TryGetValue("left_shoulder", out Vector2 lSh) ||
+                !rawJoints.TryGetValue("right_shoulder", out Vector2 rSh))
+            {
+                return normalized;
+            }
 
-    Vector2 root = (lHip + rHip) * 0.5f;
-    Vector2 shoulderMid = (lSh + rSh) * 0.5f;
+            Vector2 root = (lHip + rHip) * 0.5f;
+            Vector2 shoulderMid = (lSh + rSh) * 0.5f;
 
-    // Truc Y: chieu cao than (hong -> vai), chi lay thanh phan Y de khong bi anh huong boi do nghieng ngang
-    float torsoHeight = Mathf.Abs(shoulderMid.y - root.y);
-    if (torsoHeight < 1e-4f) torsoHeight = 1.0f;
+            // Độ dài thân người 2D (Euclidean distance từ trung điểm hông đến trung điểm vai)
+            float torsoLength = Vector2.Distance(shoulderMid, root);
+            if (torsoLength < 1e-5f) torsoLength = 1.0f;
 
-    // Truc X: do rong vai (vai trai -> vai phai), chi lay thanh phan X
-    float shoulderWidth = Mathf.Abs(rSh.x - lSh.x);
-    if (shoulderWidth < 1e-4f) shoulderWidth = torsoHeight; // fallback an toan khi vai bi che khoi camera
+            foreach (var kvp in rawJoints)
+            {
+                normalized[kvp.Key] = (kvp.Value - root) / torsoLength;
+            }
 
-    foreach (var kvp in rawJoints)
-    {
-        float normX = (kvp.Value.x - root.x) / shoulderWidth;
-        float normY = (kvp.Value.y - root.y) / torsoHeight;
-        normalized[kvp.Key] = new Vector2(normX, normY);
-    }
-
-    return normalized;
-}
+            return normalized;
+        }
 
 
         /// <summary>

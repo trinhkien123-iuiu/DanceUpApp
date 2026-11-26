@@ -47,6 +47,11 @@ namespace DanceUp.Features.Practice
         [SerializeField] private TMP_Text txtSpeed;
         [SerializeField] private TMP_Text txtAccuracyBadge;
 
+        [Header("Collapsed Controls (Figma 06)")]
+        [SerializeField] private GameObject bottomPanelObject;
+        [SerializeField] private Button btnShowControls;
+        [SerializeField] private Button btnHideControls;
+
         private bool isMirrored = false;
         private float currentPlaybackSpeed = 1.0f;
         private bool isAudioMuted = false;
@@ -269,6 +274,20 @@ namespace DanceUp.Features.Practice
             {
                 btnPerspectiveCamera.onClick.AddListener(() => SetPerspectiveTab(2));
             }
+            if (btnShowControls != null)
+            {
+                btnShowControls.onClick.AddListener(() => SetControlsExpanded(true));
+            }
+            if (btnHideControls != null)
+            {
+                btnHideControls.onClick.AddListener(() => SetControlsExpanded(false));
+            }
+        }
+
+        public void SetControlsExpanded(bool expanded)
+        {
+            if (bottomPanelObject != null) bottomPanelObject.SetActive(expanded);
+            if (btnShowControls != null) btnShowControls.gameObject.SetActive(!expanded);
         }
 
         private void ToggleMirror()
@@ -324,9 +343,9 @@ namespace DanceUp.Features.Practice
         private void SetPerspectiveTab(int index)
         {
             Color activeBg = new Color(0f, 0.706f, 1f, 1f); // #00B4FF
-            Color activeText = new Color(0.027f, 0.063f, 0.161f, 1f); // #071029
-            Color inactiveBg = new Color(0.051f, 0.106f, 0.165f, 1f); // #0D1B2A
-            Color inactiveText = Color.white;
+            Color activeText = new Color(0.867f, 0.902f, 0.933f, 1f); // #DDE6EE
+            Color inactiveBg = new Color(0.051f, 0.106f, 0.165f, 0f); // Transparent
+            Color inactiveText = new Color(0.510f, 0.576f, 0.651f, 1f); // #8293A6
 
             Button[] btns = { btnPerspectiveFront, btnPerspectiveBack, btnPerspectiveCamera };
             for (int i = 0; i < btns.Length; i++)
@@ -361,12 +380,12 @@ namespace DanceUp.Features.Practice
                 }
 
                 var vRect = videoObj.GetComponent<RectTransform>();
-                // Góc trên bên trái: anchor (0, 1), pivot (0, 1)
-                vRect.anchorMin = new Vector2(0f, 1f);
-                vRect.anchorMax = new Vector2(0f, 1f);
-                vRect.pivot = new Vector2(0f, 1f);
-                vRect.anchoredPosition = new Vector2(16f, -65f); // Cách lề trái 16px, dưới thanh trạng thái 65px
-                vRect.sizeDelta = new Vector2(120f, 160f); // Tỉ lệ chuẩn 3:4!
+                // Góc trên bên phải theo Figma 06: anchor (1, 1), pivot (1, 1)
+                vRect.anchorMin = new Vector2(1f, 1f);
+                vRect.anchorMax = new Vector2(1f, 1f);
+                vRect.pivot = new Vector2(1f, 1f);
+                vRect.anchoredPosition = new Vector2(-16f, -102f);
+                vRect.sizeDelta = new Vector2(84f, 111f);
 
                 var rawImg = videoObj.GetComponent<RawImage>();
                 var vp = videoObj.GetComponent<VideoPlayer>();
@@ -440,6 +459,8 @@ namespace DanceUp.Features.Practice
         {
             gameObject.SetActive(true);
             if (bottomNavObject != null) bottomNavObject.SetActive(false);
+            SetControlsExpanded(false);
+            SetPerspectiveTab(2);
 
             EnsureCountdownUI();
 

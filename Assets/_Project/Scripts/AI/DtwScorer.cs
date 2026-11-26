@@ -475,5 +475,66 @@ namespace DanceUp.AI
             float accuracy = Mathf.Exp(-k * normalizedCost) * 100f;
             return Mathf.Clamp(accuracy, 0f, 100f);
         }
+            /// <summary>
+        /// Căn chỉnh chuỗi thời gian DTW trên tọa độ đã chuẩn hóa 2D (26 chiều) theo quy trình processing_11_ver1.
+        /// Trả về mảng chỉ số khung hình giáo viên khớp nhất cho từng khung hình học viên.
+        /// </summary>
+        public static int[] AlignNormalizedSequences(
+            List<Dictionary<string, Vector2>> studentNormSeq,
+            List<Dictionary<string, Vector2>> teacherNormSeq)
+        {
+            if (studentNormSeq == null || studentNormSeq.Count == 0) return new int[0];
+            int n = studentNormSeq.Count;
+            int m = (teacherNormSeq != null) ? teacherNormSeq.Count : 0;
+            int[] aligned = new int[n];
+            if (m == 0) return aligned;
+
+            var sVecs = new List<float[]>(n);
+            var tVecs = new List<float[]>(m);
+            for (int i = 0; i < n; i++) sVecs.Add(DictToFlatVector(studentNormSeq[i]));
+            for (int j = 0; j < m; j++) tVecs.Add(DictToFlatVector(teacherNormSeq[j]));
+
+            var (_, path) = ComputeDtwWithPath(sVecs, tVecs);
+
+            var bestMatch = new Dictionary<int, (float dist, int tIdx)>();
+            foreach (var (s, t) in path)
+            {
+                float d = EuclideanDistance(sVecs[s], tVecs[t]);
+                if (!bestMatch.TryGetValue(s, out var cur) || d < cur.dist)
+                {
+                    bestMatch[s] = (d, t);
+                }
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                if (bestMatch.TryGetValue(i, out var mInfo))
+                {
+                    aligned[i] = mInfo.tIdx;
+                }
+                else
+                {
+                    float ratio = (n > 1) ? (float)i / (n - 1) : 0f;
+                    aligned[i] = Mathf.Clamp(Mathf.RoundToInt(ratio * (m - 1)), 0, m - 1);
+                }
+            }
+
+            return aligned;
+        }
+
+        private static float[] DictToFlatVector(Dictionary<string, Vector2> dict)
+        {
+            float[] vec = new float[DTW_JOINTS.Length * 2];
+            if (dict == null) return vec;
+            for (int i = 0; i < DTW_JOINTS.Length; i++)
+            {
+                if (dict.TryGetValue(DTW_JOINTS[i], out var p))
+                {
+                    vec[i * 2] = p.x;
+                    vec[i * 2 + 1] = p.y;
+                }
+            }
+            return vec;
+        }
     }
 }

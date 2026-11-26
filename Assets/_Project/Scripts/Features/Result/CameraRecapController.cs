@@ -522,10 +522,9 @@ namespace DanceUp.Features.Result
 
                 if (jointUIs.TryGetValue(jointName, out var jointRt))
                 {
-                    // Chuyển đổi tọa độ chuẩn hóa (0..1) sang khung hình Canvas
-                    // Y trong Mediapipe là từ trên xuống dưới (0 ở trên, 1 ở dưới)
+                    // Chuyển đổi tọa độ chuẩn hóa (0..1, Y hướng lên từ pose_extractor.py: 0 ở dưới, 1 ở trên) sang khung hình Canvas
                     float x = (item.studentPos.x - 0.5f) * containerW;
-                    float y = (0.5f - item.studentPos.y) * containerH;
+                    float y = (item.studentPos.y - 0.5f) * containerH;
 
                     jointRt.anchoredPosition = new Vector2(x, y);
 
@@ -544,8 +543,8 @@ namespace DanceUp.Features.Result
             {
                 if (fr.joints.TryGetValue(j1, out var p1) && fr.joints.TryGetValue(j2, out var p2))
                 {
-                    Vector2 posA = new Vector2((p1.studentPos.x - 0.5f) * containerW, (0.5f - p1.studentPos.y) * containerH);
-                    Vector2 posB = new Vector2((p2.studentPos.x - 0.5f) * containerW, (0.5f - p2.studentPos.y) * containerH);
+                    Vector2 posA = new Vector2((p1.studentPos.x - 0.5f) * containerW, (p1.studentPos.y - 0.5f) * containerH);
+                    Vector2 posB = new Vector2((p2.studentPos.x - 0.5f) * containerW, (p2.studentPos.y - 0.5f) * containerH);
 
                     Vector2 diff = posB - posA;
                     boneRt.anchoredPosition = (posA + posB) / 2f;
@@ -693,19 +692,19 @@ namespace DanceUp.Features.Result
 
                 // Fake smooth movement
                 float sway = Mathf.Sin(t * 3f) * 0.15f;
-                AddJoint(fr, "nose", 0.5f + sway * 0.3f, 0.2f);
-                AddJoint(fr, "left_shoulder", 0.42f + sway, 0.32f);
-                AddJoint(fr, "right_shoulder", 0.58f + sway, 0.32f);
-                AddJoint(fr, "left_elbow", 0.35f + sway * 1.2f, 0.45f);
-                AddJoint(fr, "right_elbow", 0.65f + sway * 1.2f, 0.45f);
-                AddJoint(fr, "left_wrist", 0.30f + sway * 1.5f, 0.58f);
-                AddJoint(fr, "right_wrist", 0.70f + sway * 1.5f, 0.58f);
-                AddJoint(fr, "left_hip", 0.45f + sway * 0.5f, 0.58f);
-                AddJoint(fr, "right_hip", 0.55f + sway * 0.5f, 0.58f);
-                AddJoint(fr, "left_knee", 0.44f + sway * 0.4f, 0.75f);
-                AddJoint(fr, "right_knee", 0.56f + sway * 0.4f, 0.75f);
-                AddJoint(fr, "left_ankle", 0.43f + sway * 0.2f, 0.92f);
-                AddJoint(fr, "right_ankle", 0.57f + sway * 0.2f, 0.92f);
+                AddJoint(fr, "nose", 0.5f + sway * 0.3f, 0.8f);
+                AddJoint(fr, "left_shoulder", 0.42f + sway, 0.68f);
+                AddJoint(fr, "right_shoulder", 0.58f + sway, 0.68f);
+                AddJoint(fr, "left_elbow", 0.35f + sway * 1.2f, 0.55f);
+                AddJoint(fr, "right_elbow", 0.65f + sway * 1.2f, 0.55f);
+                AddJoint(fr, "left_wrist", 0.30f + sway * 1.5f, 0.42f);
+                AddJoint(fr, "right_wrist", 0.70f + sway * 1.5f, 0.42f);
+                AddJoint(fr, "left_hip", 0.45f + sway * 0.5f, 0.42f);
+                AddJoint(fr, "right_hip", 0.55f + sway * 0.5f, 0.42f);
+                AddJoint(fr, "left_knee", 0.44f + sway * 0.4f, 0.25f);
+                AddJoint(fr, "right_knee", 0.56f + sway * 0.4f, 0.25f);
+                AddJoint(fr, "left_ankle", 0.43f + sway * 0.2f, 0.08f);
+                AddJoint(fr, "right_ankle", 0.57f + sway * 0.2f, 0.08f);
 
                 frames.Add(fr);
             }

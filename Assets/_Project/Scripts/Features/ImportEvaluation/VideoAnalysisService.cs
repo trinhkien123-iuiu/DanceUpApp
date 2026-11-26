@@ -223,16 +223,32 @@ namespace DanceUp.Features.ImportEvaluation
                 yield break;
             }
 
-            onProgress?.Invoke(0.85f, "Chấm điểm từng khung hình qua mô hình ML CatBoost...");
-            yield return new WaitForSeconds(0.2f);
-
-            // 3. Đánh giá từng khung hình qua DanceMLPipeline
+            // 3. Tiền xử lý (Nội suy các khớp có Visibility < 0.5) & Căn chỉnh DTW theo chuẩn processing_11_ver1
             if (mlPipeline == null)
             {
                 mlPipeline = gameObject.AddComponent<DanceMLPipeline>();
                 mlPipeline.InitModel();
             }
             mlPipeline.InitModel();
+            mlPipeline.ResetSession();
+
+            InterpolateLowVisibility(studentFrames, 0.5f);
+
+            var studentNormSeq = new List<Dictionary<string, Vector2>>(studentFrames.Count);
+            for (int i = 0; i < studentFrames.Count; i++)
+                studentNormSeq.Add(mlPipeline.NormalizePose(studentFrames[i].joints));
+
+            var teacherNormSeq = new List<Dictionary<string, Vector2>>(teacherFrames.Count);
+            for (int j = 0; j < teacherFrames.Count; j++)
+                teacherNormSeq.Add(mlPipeline.NormalizePose(teacherFrames[j]));
+
+            onProgress?.Invoke(0.82f, "Đang căn chỉnh chuỗi thời gian FastDTW...");
+            yield return null;
+
+            int[] alignedTeacherIndices = DtwScorer.AlignNormalizedSequences(studentNormSeq, teacherNormSeq);
+
+            onProgress?.Invoke(0.88f, "Chấm điểm từng khung hình qua mô hình ML CatBoost (T* = 8.1)...");
+            yield return new WaitForSeconds(0.1f);
 
             var frameResults = new List<FrameEvaluationResult>();
             int passCount = 0;
@@ -243,9 +259,9 @@ namespace DanceUp.Features.ImportEvaluation
                 var sf = studentFrames[i];
                 float t = sf.timestamp;
 
-                // Ánh xạ tương đối tới khung hình giáo viên theo tiến độ bài nhảy
-                float tRatio = (sessionDuration > 0f) ? (t / sessionDuration) : ((float)i / studentFrames.Count);
-                int tIdx = Mathf.Clamp(Mathf.RoundToInt(tRatio * (teacherFrames.Count - 1)), 0, teacherFrames.Count - 1);
+                int tIdx = (i < alignedTeacherIndices.Length)
+                    ? Mathf.Clamp(alignedTeacherIndices[i], 0, teacherFrames.Count - 1)
+                    : 0;
                 var teacherJoints = teacherFrames[tIdx];
 
                 FrameEvaluationResult fr;
@@ -299,9 +315,9 @@ namespace DanceUp.Features.ImportEvaluation
             // 4. Chạy thuật toán Dynamic Time Warping (DTW) thực tế
             var (dtwAcc, deviations, avgDrift) = DtwScorer.ComputeWithDeviations(frameResults, fps > 0f ? fps : 30f);
 
-            // 5. Tổng hợp dữ liệu kết quả thực tế
+            // 5. Tổng hợp dữ liệu kết quả thực tế theo chuẩn processing_11_ver1 (Frame Pass Rate với T* = 8.1)
             float frameAcc = (frameResults.Count > 0) ? ((float)passCount / frameResults.Count * 100f) : 0f;
-            float overallScore = Mathf.Clamp(Mathf.Round(frameAcc * 0.45f + dtwAcc * 0.55f), 5f, 100f);
+            float overallScore = Mathf.Clamp(Mathf.Round(frameAcc), 5f, 100f);
 
             var sessionData = new SessionEvaluationData
             {
@@ -383,6 +399,66 @@ namespace DanceUp.Features.ImportEvaluation
             public float timestamp;
             public bool poseDetected;
             public Dictionary<string, Vector2> joints = new Dictionary<string, Vector2>();
+            public Dictionary<string, float> visibilities = new Dictionary<string, float>();
+        }
+
+        private static void InterpolateLowVisibility(List<FramePoseData> frames, float visThreshold = 0.5f)
+        {
+            if (frames == null || frames.Count == 0) return;
+            int n = frames.Count;
+
+            foreach (var joint in DanceMLPipeline.JOINTS)
+            {
+                var validIndices = new List<int>();
+                for (int i = 0; i < n; i++)
+                {
+                    if (frames[i].joints.ContainsKey(joint))
+                    {
+                        float vis = frames[i].visibilities.TryGetValue(joint, out float v) ? v : 1.0f;
+                        if (vis >= visThreshold) validIndices.Add(i);
+                    }
+                }
+
+                if (validIndices.Count == 0) continue;
+
+                // Nội suy tuyến tính giữa các frame hợp lệ và mở rộng 2 đầu (limit_direction='both')
+                int firstValid = validIndices[0];
+                Vector2 firstPos = frames[firstValid].joints[joint];
+                for (int i = 0; i < firstValid; i++)
+                {
+                    frames[i].joints[joint] = firstPos;
+                    frames[i].visibilities[joint] = 1.0f;
+                }
+
+                for (int k = 0; k < validIndices.Count - 1; k++)
+                {
+                    int idxA = validIndices[k];
+                    int idxB = validIndices[k + 1];
+                    if (idxB - idxA <= 1) continue;
+
+                    Vector2 posA = frames[idxA].joints[joint];
+                    Vector2 posB = frames[idxB].joints[joint];
+                    for (int i = idxA + 1; i < idxB; i++)
+                    {
+                        float alpha = (float)(i - idxA) / (idxB - idxA);
+                        frames[i].joints[joint] = Vector2.Lerp(posA, posB, alpha);
+                        frames[i].visibilities[joint] = 1.0f;
+                    }
+                }
+
+                int lastValid = validIndices[validIndices.Count - 1];
+                Vector2 lastPos = frames[lastValid].joints[joint];
+                for (int i = lastValid + 1; i < n; i++)
+                {
+                    frames[i].joints[joint] = lastPos;
+                    frames[i].visibilities[joint] = 1.0f;
+                }
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                if (frames[i].joints.Count >= 6) frames[i].poseDetected = true;
+            }
         }
 
         private List<FramePoseData> ParseStudentPoseJson(string jsonPath, out float duration, out float fps)
@@ -457,6 +533,15 @@ namespace DanceUp.Features.ImportEvaluation
                                     float.TryParse(yStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out y))
                                 {
                                     fpd.joints[j] = new Vector2(x, y);
+                                    float vis = 1.0f;
+                                    int vIdx = block.IndexOf("\"visibility\":", jIdx);
+                                    int nextBrace = block.IndexOf('}', jIdx);
+                                    if (vIdx >= 0 && (nextBrace < 0 || vIdx < nextBrace))
+                                    {
+                                        string vStr = block.Substring(vIdx + 13, Math.Min(8, block.Length - (vIdx + 13))).Split(',', '}')[0].Trim();
+                                        float.TryParse(vStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out vis);
+                                    }
+                                    fpd.visibilities[j] = vis;
                                     detectedJointsCount++;
                                 }
                             }

@@ -46,8 +46,9 @@
       "right_ankle": 1.0
     },
     "max_score_per_frame": 13.0,
-    "pass_threshold": 7.1,
-    "note": "frame_score = sum of Predicted_Pass * weight. frame_pass = (frame_score >= 7.1)"
+    "pass_threshold": 8.1,
+    "variance_threshold": 0.020,
+    "note": "frame_score = sum of Predicted_Pass * weight. frame_pass = (frame_score >= 8.1)"
   },
   "fps": 30.0,
   "joints": [
