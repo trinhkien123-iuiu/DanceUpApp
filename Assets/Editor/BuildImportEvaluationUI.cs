@@ -109,7 +109,7 @@ namespace DanceUp.Editor
             GameObject cardObj = CreateImage("DialogCard", modalObj.transform, sprRounded, ColorCardDark, 2.5f);
             var cardRt = cardObj.GetComponent<RectTransform>();
             SetAnchors(cardRt, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
-            cardRt.sizeDelta = new Vector2(360f, 430f);
+            cardRt.sizeDelta = new Vector2(368f, 556f);
 
             // Viền card
             var border = CreateImage("Border", cardObj.transform, sprRounded, ColorCardBorder, 2.5f);
@@ -159,7 +159,53 @@ namespace DanceUp.Editor
             vlg.childForceExpandHeight = false;
             vlg.spacing = 10f;
 
-            // Option 1: Video mẫu
+            // Section 1: VIDEO MẪU ĐỐI CHIẾU
+            GameObject refSection = CreateUIObject("RefVideoSection", content.transform);
+            var refLe = refSection.AddComponent<LayoutElement>();
+            refLe.minHeight = 114f;
+            refLe.preferredHeight = 114f;
+            var refVlg = refSection.AddComponent<VerticalLayoutGroup>();
+            refVlg.spacing = 6f;
+            refVlg.childControlWidth = true;
+            refVlg.childControlHeight = false;
+            refVlg.childForceExpandWidth = true;
+            refVlg.childForceExpandHeight = false;
+
+            var lblRefHdr = CreateText("Txt_RefHeader", refSection.transform, "1. VIDEO MẪU ĐỐI CHIẾU (GIÁO VIÊN)", fontBold, 10.5f, ColorCyan, TextAlignmentOptions.BottomLeft);
+            lblRefHdr.AddComponent<LayoutElement>().preferredHeight = 16f;
+
+            GameObject btnRow = CreateUIObject("BtnRow", refSection.transform);
+            var brLe = btnRow.AddComponent<LayoutElement>();
+            brLe.minHeight = 36f;
+            brLe.preferredHeight = 36f;
+            var brHlg = btnRow.AddComponent<HorizontalLayoutGroup>();
+            brHlg.spacing = 8f;
+            brHlg.childControlWidth = true;
+            brHlg.childControlHeight = true;
+            brHlg.childForceExpandWidth = true;
+            brHlg.childForceExpandHeight = true;
+
+            GameObject btnDefRef = CreateButtonWithText("Btn_DefaultRef", btnRow.transform, sprRounded, new Color(0.08f, 0.15f, 0.25f, 1f), "Mẫu sẵn (1_teacher)", fontBold, 11f, Color.white, 3f);
+            GameObject btnBrowseRef = CreateButtonWithText("Btn_BrowseRef", btnRow.transform, sprRounded, new Color(0.06f, 0.22f, 0.34f, 1f), "Chọn Video Mẫu...", fontBold, 11f, ColorCyan, 3f);
+
+            GameObject refBox = CreateImage("RefSelectedBox", refSection.transform, sprRounded, new Color(0.04f, 0.08f, 0.14f, 1f), 3f);
+            var rbxLe = refBox.AddComponent<LayoutElement>();
+            rbxLe.minHeight = 46f;
+            rbxLe.preferredHeight = 46f;
+            GameObject txtRefName = CreateText("Txt_RefName", refBox.transform, "1_teacher.mp4 (Mẫu mặc định)", fontBold, 11f, ColorCyan, TextAlignmentOptions.Left);
+            var trnRt = txtRefName.GetComponent<RectTransform>();
+            trnRt.anchoredPosition = new Vector2(12f, 8f);
+            trnRt.sizeDelta = new Vector2(310f, 18f);
+            GameObject txtRefMeta = CreateText("Txt_RefMeta", refBox.transform, "12.3s • 720×1280 • Sẵn sàng đối chiếu", fontRegular, 9.5f, ColorGreen, TextAlignmentOptions.Left);
+            var trmRt = txtRefMeta.GetComponent<RectTransform>();
+            trmRt.anchoredPosition = new Vector2(12f, -9f);
+            trmRt.sizeDelta = new Vector2(310f, 16f);
+
+            // Section 2 Header
+            var lblStuHdr = CreateText("Txt_StudentHeader", content.transform, "2. VIDEO BÀI NHẢY CẦN ĐÁNH GIÁ (HỌC VIÊN)", fontBold, 10.5f, ColorGreen, TextAlignmentOptions.BottomLeft);
+            lblStuHdr.AddComponent<LayoutElement>().preferredHeight = 18f;
+
+            // Option 1: Video thử nghiệm học viên
             GameObject btnSample = CreateButton("Btn_SelectSample", content.transform, sprRounded, new Color(0.08f, 0.15f, 0.25f, 1f), 3f);
             var bsRt = btnSample.GetComponent<RectTransform>();
             bsRt.sizeDelta = new Vector2(0f, 62f);
@@ -167,9 +213,9 @@ namespace DanceUp.Editor
             bsLe.minHeight = 62f;
             bsLe.preferredHeight = 62f;
 
-            CreateText("Label", btnSample.transform, "📹  Dùng Video Mẫu Kiểm Thử", fontBold, 13f, Color.white, TextAlignmentOptions.Left)
+            CreateText("Label", btnSample.transform, "Dùng Video Bài Nhảy Thử Nghiệm", fontBold, 13f, Color.white, TextAlignmentOptions.Left)
                 .GetComponent<RectTransform>().anchoredPosition = new Vector2(16f, 10f);
-            CreateText("Meta", btnSample.transform, "1_teacher.mp4 • 12.3s • 720×1280 • 30 FPS", fontRegular, 10.5f, ColorCyan, TextAlignmentOptions.Left)
+            CreateText("Meta", btnSample.transform, "1_student.mp4 / 2_student.mp4 • Sẵn trong project", fontRegular, 10.5f, ColorCyan, TextAlignmentOptions.Left)
                 .GetComponent<RectTransform>().anchoredPosition = new Vector2(16f, -12f);
 
             // Option 2: Chọn từ máy tính
@@ -214,6 +260,10 @@ namespace DanceUp.Editor
             var so = new SerializedObject(controller);
             so.FindProperty("btnClose").objectReferenceValue = btnClose.GetComponent<Button>();
             so.FindProperty("txtTitle").objectReferenceValue = txtTitle.GetComponent<TMP_Text>();
+            so.FindProperty("btnSelectDefaultRef").objectReferenceValue = btnDefRef.GetComponent<Button>();
+            so.FindProperty("btnBrowseRefFile").objectReferenceValue = btnBrowseRef.GetComponent<Button>();
+            so.FindProperty("txtRefVideoName").objectReferenceValue = txtRefName.GetComponent<TMP_Text>();
+            so.FindProperty("txtRefVideoMeta").objectReferenceValue = txtRefMeta.GetComponent<TMP_Text>();
             so.FindProperty("btnSelectSample").objectReferenceValue = btnSample.GetComponent<Button>();
             so.FindProperty("btnBrowseFile").objectReferenceValue = btnBrowse.GetComponent<Button>();
             so.FindProperty("txtSelectedVideoName").objectReferenceValue = txtSelName.GetComponent<TMP_Text>();

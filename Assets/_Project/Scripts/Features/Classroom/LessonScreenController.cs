@@ -93,6 +93,9 @@ namespace DanceUp.Features.Classroom
 
             if (importModalController != null && loadingController != null)
             {
+                importModalController.OnStartDualAnalysisRequested -= HandleStartDualAnalysisRequested;
+                importModalController.OnStartDualAnalysisRequested += HandleStartDualAnalysisRequested;
+
                 importModalController.OnStartAnalysisRequested -= HandleStartAnalysisRequested;
                 importModalController.OnStartAnalysisRequested += HandleStartAnalysisRequested;
             }
@@ -102,6 +105,7 @@ namespace DanceUp.Features.Classroom
         {
             if (importModalController != null)
             {
+                importModalController.OnStartDualAnalysisRequested -= HandleStartDualAnalysisRequested;
                 importModalController.OnStartAnalysisRequested -= HandleStartAnalysisRequested;
             }
         }
@@ -130,6 +134,11 @@ namespace DanceUp.Features.Classroom
 
         private void HandleStartAnalysisRequested(string videoPath, VideoClip teacherClip, string title)
         {
+            HandleStartDualAnalysisRequested(videoPath, "", teacherClip, title);
+        }
+
+        private void HandleStartDualAnalysisRequested(string videoPath, string referenceVideoPath, VideoClip teacherClip, string title)
+        {
             if (loadingController == null)
             {
                 loadingController = FindObjectOfType<VideoAnalysisLoadingController>(true);
@@ -137,7 +146,7 @@ namespace DanceUp.Features.Classroom
 
             if (loadingController != null)
             {
-                loadingController.StartAnalysis(videoPath, teacherClip, title);
+                loadingController.StartAnalysis(videoPath, teacherClip, title, referenceVideoPath);
             }
             else
             {

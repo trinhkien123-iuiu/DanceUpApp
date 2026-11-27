@@ -99,12 +99,17 @@ namespace DanceUp.Features.Result
         private string highlightedErrorJoint = "";
 
         private RenderTexture teacherRT;
+        private VideoPlayer vpStudent;
+        private RawImage imgStudentVideo;
+        private RenderTexture studentRT;
+        private bool hasStudentVideoSource = false;
 
         private void Awake()
         {
             BindControls();
             InitSkeletonUI();
             SetupTeacherRenderTexture();
+            EnsureStudentVideoOverlay();
         }
 
         private void SetupTeacherRenderTexture()
@@ -124,6 +129,58 @@ namespace DanceUp.Features.Result
             if (imgTeacherVideo != null)
             {
                 imgTeacherVideo.texture = teacherRT;
+            }
+        }
+
+        private void EnsureStudentVideoOverlay()
+        {
+            if (studentSkeletonContainer == null) return;
+            Transform vpStudentObj = studentSkeletonContainer.parent;
+            if (vpStudentObj == null) return;
+
+            if (studentRT == null)
+            {
+                studentRT = new RenderTexture(480, 640, 0, RenderTextureFormat.ARGB32);
+                studentRT.name = "RT_StudentRecap";
+            }
+
+            Transform existingRaw = vpStudentObj.Find("RawImage_StudentVideo");
+            if (existingRaw != null)
+            {
+                imgStudentVideo = existingRaw.GetComponent<RawImage>();
+                vpStudent = existingRaw.GetComponent<VideoPlayer>();
+            }
+            else
+            {
+                var rawObj = new GameObject("RawImage_StudentVideo", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage), typeof(VideoPlayer));
+                rawObj.transform.SetParent(vpStudentObj, false);
+                // Đặt ngay trước SkeletonContainer để skeleton nằm đè lên video học viên
+                rawObj.transform.SetSiblingIndex(studentSkeletonContainer.GetSiblingIndex());
+
+                var rt = rawObj.GetComponent<RectTransform>();
+                rt.anchorMin = studentSkeletonContainer.anchorMin;
+                rt.anchorMax = studentSkeletonContainer.anchorMax;
+                rt.offsetMin = studentSkeletonContainer.offsetMin;
+                rt.offsetMax = studentSkeletonContainer.offsetMax;
+
+                imgStudentVideo = rawObj.GetComponent<RawImage>();
+                imgStudentVideo.raycastTarget = false;
+                vpStudent = rawObj.GetComponent<VideoPlayer>();
+                vpStudent.playOnAwake = false;
+                vpStudent.waitForFirstFrame = true;
+                vpStudent.audioOutputMode = VideoAudioOutputMode.None;
+            }
+
+            if (vpStudent != null)
+            {
+                vpStudent.renderMode = VideoRenderMode.RenderTexture;
+                vpStudent.targetTexture = studentRT;
+            }
+
+            if (imgStudentVideo != null)
+            {
+                imgStudentVideo.texture = studentRT;
+                imgStudentVideo.gameObject.SetActive(false);
             }
         }
 
@@ -187,13 +244,14 @@ namespace DanceUp.Features.Result
             transform.SetAsLastSibling();
 
             SetupTeacherRenderTexture();
+            EnsureStudentVideoOverlay();
             InitSkeletonUI();
 
             sessionData = data;
             playbackSpeed = Mathf.Clamp(initialSpeed, 0.25f, 2.0f);
             if (txtSpeed != null) txtSpeed.text = playbackSpeed.ToString("0.##") + "×";
 
-            // Nạp video mẫu
+            // Nạp video mẫu (ưu tiên referenceVideoPath nếu người dùng truyền video mẫu tùy chọn)
             if (defaultTeacherClip == null)
             {
                 var clips = Resources.FindObjectsOfTypeAll<VideoClip>();
@@ -209,11 +267,39 @@ namespace DanceUp.Features.Result
 
             if (vpTeacher != null)
             {
-                if (vpTeacher.clip == null && defaultTeacherClip != null)
+                if (sessionData != null && !string.IsNullOrEmpty(sessionData.referenceVideoPath) && File.Exists(sessionData.referenceVideoPath))
                 {
-                    vpTeacher.clip = defaultTeacherClip;
+                    vpTeacher.source = VideoSource.Url;
+                    vpTeacher.url = sessionData.referenceVideoPath;
+                }
+                else
+                {
+                    vpTeacher.source = VideoSource.VideoClip;
+                    vpTeacher.url = "";
+                    if (defaultTeacherClip != null) vpTeacher.clip = defaultTeacherClip;
                 }
                 vpTeacher.playbackSpeed = playbackSpeed;
+            }
+
+            // Nạp video học viên nền (nếu là video import từ máy tính / project)
+            hasStudentVideoSource = false;
+            if (vpStudent != null && imgStudentVideo != null)
+            {
+                if (sessionData != null && !string.IsNullOrEmpty(sessionData.analyzedVideoPath) && File.Exists(sessionData.analyzedVideoPath))
+                {
+                    vpStudent.source = VideoSource.Url;
+                    vpStudent.url = sessionData.analyzedVideoPath;
+                    vpStudent.playbackSpeed = playbackSpeed;
+                    vpStudent.Prepare();
+                    imgStudentVideo.gameObject.SetActive(true);
+                    hasStudentVideoSource = true;
+                    if (txtStudentLabel != null) txtStudentLabel.text = "VIDEO HỌC VIÊN + SKELETON";
+                }
+                else
+                {
+                    imgStudentVideo.gameObject.SetActive(false);
+                    if (txtStudentLabel != null) txtStudentLabel.text = "HỌC VIÊN SKELETON";
+                }
             }
 
             // Nạp dữ liệu Frame Results
@@ -308,7 +394,9 @@ namespace DanceUp.Features.Result
 
             if (txtAccuracyBadge != null && sessionData != null)
             {
-                txtAccuracyBadge.text = sessionData.overallAccuracy.ToString("F0") + "% ĐẠT";
+                bool passed = sessionData.isPassedStandard || sessionData.overallAccuracy >= 70f;
+                txtAccuracyBadge.text = sessionData.overallAccuracy.ToString("F0") + (passed ? "% ĐẠT" : "% CHƯA ĐẠT");
+                txtAccuracyBadge.color = passed ? colorPass : colorError;
             }
 
             SeekTo(currentTime);
@@ -375,6 +463,12 @@ namespace DanceUp.Features.Result
                 vpTeacher.time = currentTime;
                 vpTeacher.Play();
             }
+            if (hasStudentVideoSource && vpStudent != null)
+            {
+                vpStudent.playbackSpeed = playbackSpeed;
+                vpStudent.time = currentTime;
+                vpStudent.Play();
+            }
             UpdatePlayPauseIcon();
         }
 
@@ -384,6 +478,10 @@ namespace DanceUp.Features.Result
             if (vpTeacher != null)
             {
                 vpTeacher.Pause();
+            }
+            if (hasStudentVideoSource && vpStudent != null)
+            {
+                vpStudent.Pause();
             }
             UpdatePlayPauseIcon();
         }
@@ -405,6 +503,15 @@ namespace DanceUp.Features.Result
                 {
                     vpTeacher.Play();
                     vpTeacher.Pause();
+                }
+            }
+            if (hasStudentVideoSource && vpStudent != null)
+            {
+                vpStudent.time = currentTime;
+                if (!isPlaying)
+                {
+                    vpStudent.Play();
+                    vpStudent.Pause();
                 }
             }
 
@@ -433,6 +540,10 @@ namespace DanceUp.Features.Result
             if (vpTeacher != null)
             {
                 vpTeacher.playbackSpeed = playbackSpeed;
+            }
+            if (hasStudentVideoSource && vpStudent != null)
+            {
+                vpStudent.playbackSpeed = playbackSpeed;
             }
         }
 
@@ -734,6 +845,11 @@ namespace DanceUp.Features.Result
             {
                 teacherRT.Release();
                 teacherRT = null;
+            }
+            if (studentRT != null)
+            {
+                studentRT.Release();
+                studentRT = null;
             }
         }
     }

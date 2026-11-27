@@ -46,7 +46,7 @@ namespace DanceUp.Features.ImportEvaluation
             }
         }
 
-        public void StartAnalysis(string videoPath, VideoClip teacherClip, string lessonTitle)
+        public void StartAnalysis(string videoPath, VideoClip teacherClip, string lessonTitle, string referenceVideoPath = "")
         {
             gameObject.SetActive(true);
             transform.SetAsLastSibling();
@@ -55,7 +55,10 @@ namespace DanceUp.Features.ImportEvaluation
             if (txtSubtitle != null)
             {
                 string fName = System.IO.Path.GetFileName(videoPath);
-                txtSubtitle.text = $"{lessonTitle} • {fName}";
+                string refName = !string.IsNullOrEmpty(referenceVideoPath)
+                    ? System.IO.Path.GetFileName(referenceVideoPath)
+                    : (teacherClip != null ? teacherClip.name : "Mẫu chuẩn");
+                txtSubtitle.text = $"{refName} vs {fName}";
             }
 
             UpdateProgress(0f, "Đang khởi tạo bộ phân tích MediaPipe...");
@@ -84,7 +87,8 @@ namespace DanceUp.Features.ImportEvaluation
                     if (isCancelled) return;
                     Debug.LogError("[VideoAnalysisLoading] Analysis error: " + error);
                     UpdateProgress(0f, "Lỗi: " + error);
-                }
+                },
+                referenceVideoPath
             );
         }
 

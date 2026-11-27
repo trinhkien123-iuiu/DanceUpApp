@@ -522,6 +522,222 @@ namespace DanceUp.AI
             return aligned;
         }
 
+        /// <summary>
+        /// Tính điểm DTW, Warping Path và phân đoạn sai lệch trực tiếp trên 2 chuỗi tọa độ đã chuẩn hóa gốc
+        /// (tránh chạy DTW lặp lại trên chuỗi đã warp sẵn).
+        /// </summary>
+        public static (float accuracy, List<DtwDeviationSegment> deviations, float avgTimeDrift) ComputeWithDeviationsFromSequences(
+            List<FrameEvaluationResult> frames,
+            List<Dictionary<string, Vector2>> studentNormSeq,
+            List<Dictionary<string, Vector2>> teacherNormSeq,
+            float studentFps = 30f,
+            float teacherFps = 30f)
+        {
+            var emptyDeviations = new List<DtwDeviationSegment>();
+            if (frames == null || frames.Count < 2 || studentNormSeq == null || teacherNormSeq == null ||
+                studentNormSeq.Count < 2 || teacherNormSeq.Count < 2)
+            {
+                return ComputeWithDeviations(frames, studentFps);
+            }
+
+            float sFps = studentFps > 1f ? studentFps : 30f;
+            float tFps = teacherFps > 1f ? teacherFps : 30f;
+
+            int n = studentNormSeq.Count;
+            int m = teacherNormSeq.Count;
+
+            var sVecs = new List<float[]>(n);
+            var tVecs = new List<float[]>(m);
+            for (int i = 0; i < n; i++) sVecs.Add(DictToFlatVector(studentNormSeq[i]));
+            for (int j = 0; j < m; j++) tVecs.Add(DictToFlatVector(teacherNormSeq[j]));
+
+            var (rawNormalizedCost, path) = ComputeDtwWithPath(sVecs, tVecs);
+
+            // Chuyển cost trên vector chuẩn hóa 26D (torso-scaled) về thang RMS mỗi tọa độ để nhất quán CostToAccuracy
+            float rmsScale = Mathf.Sqrt(DTW_JOINTS.Length * 2f);
+            float perCoordCost = rawNormalizedCost / rmsScale;
+            float accuracy = CostToAccuracy(perCoordCost, n);
+
+            // Phân tích sai lệch thực tế dựa trên warping path gốc (sIdx vs tIdx)
+            float totalDrift = 0f;
+            int count = 0;
+            var pointStates = new List<(float time, float offset, float dist, int severity, string type, string topJoint)>();
+
+            // Lấy trạng thái tốt nhất theo từng sIdx để timeline tuyến tính theo thời gian video học viên
+            var perStudentPoint = new Dictionary<int, (int tIdx, float dist, float timeOffset)>();
+            foreach (var (sIdx, tIdx) in path)
+            {
+                if (sIdx >= frames.Count || sIdx >= sVecs.Count || tIdx >= tVecs.Count) continue;
+                float dRms = EuclideanDistance(sVecs[sIdx], tVecs[tIdx]) / rmsScale;
+                float timeS = frames[sIdx].timestamp;
+                float timeT = tIdx / tFps;
+                float offset = timeS - timeT;
+
+                if (!perStudentPoint.TryGetValue(sIdx, out var existing) || dRms < existing.dist)
+                {
+                    perStudentPoint[sIdx] = (tIdx, dRms, offset);
+                }
+            }
+
+            for (int sIdx = 0; sIdx < frames.Count; sIdx++)
+            {
+                if (!perStudentPoint.TryGetValue(sIdx, out var pt)) continue;
+
+                float timeS = frames[sIdx].timestamp;
+                float timeOffset = pt.timeOffset;
+                float dist = pt.dist;
+                totalDrift += Mathf.Abs(timeOffset);
+                count++;
+
+                int severity = 0;
+                string type = "Khớp nhịp";
+
+                // Kết hợp cả đánh giá khung hình CatBoost lẫn sai lệch không gian / nhịp DTW
+                bool frameFailed = !frames[sIdx].isPass;
+                if ((frameFailed && dist > 0.42f) || dist > 0.55f)
+                {
+                    severity = 2;
+                    type = "Sai động tác";
+                }
+                else if (timeOffset > 0.40f)
+                {
+                    severity = 2;
+                    type = "Trễ nhịp";
+                }
+                else if (timeOffset < -0.40f)
+                {
+                    severity = 2;
+                    type = "Vội nhịp";
+                }
+                else if (timeOffset > 0.20f)
+                {
+                    severity = 1;
+                    type = "Chậm nhịp nhẹ";
+                }
+                else if (timeOffset < -0.20f)
+                {
+                    severity = 1;
+                    type = "Sớm nhịp nhẹ";
+                }
+                else if (frameFailed || dist > 0.30f)
+                {
+                    severity = 1;
+                    type = "Lệch tư thế";
+                }
+
+                string maxErrorJoint = "";
+                float maxJointErr = 0f;
+                if (frames[sIdx].joints != null)
+                {
+                    foreach (var kvp in frames[sIdx].joints)
+                    {
+                        if (kvp.Value.jointError > maxJointErr)
+                        {
+                            maxJointErr = kvp.Value.jointError;
+                            maxErrorJoint = kvp.Key;
+                        }
+                    }
+                }
+
+                pointStates.Add((timeS, timeOffset, dist, severity, type, maxErrorJoint));
+            }
+
+            float avgDrift = count > 0 ? (totalDrift / count) : 0f;
+            var segments = GroupPointStatesToSegments(pointStates);
+
+            Debug.Log($"[DtwScorer] True Sequence DTW Done! S={n}, T={m}, Accuracy: {accuracy:F1}%, Avg Drift: {avgDrift:F2}s, Segments: {segments.Count}");
+            return (accuracy, segments, avgDrift);
+        }
+
+        private static List<DtwDeviationSegment> GroupPointStatesToSegments(
+            List<(float time, float offset, float dist, int severity, string type, string topJoint)> pointStates)
+        {
+            var segments = new List<DtwDeviationSegment>();
+            if (pointStates == null || pointStates.Count == 0) return segments;
+
+            int segStart = 0;
+            for (int i = 1; i <= pointStates.Count; i++)
+            {
+                bool isEnd = (i == pointStates.Count);
+                bool stateChanged = !isEnd && (pointStates[i].severity != pointStates[segStart].severity || pointStates[i].type != pointStates[segStart].type);
+
+                if (isEnd || stateChanged)
+                {
+                    int segEndIdx = i - 1;
+                    float startT = pointStates[segStart].time;
+                    float endT = pointStates[segEndIdx].time;
+
+                    if (endT - startT >= 0.25f || isEnd)
+                    {
+                        float sumOffset = 0f;
+                        float sumDist = 0f;
+                        var jointCounts = new Dictionary<string, int>();
+
+                        for (int k = segStart; k <= segEndIdx; k++)
+                        {
+                            sumOffset += pointStates[k].offset;
+                            sumDist += pointStates[k].dist;
+                            string jn = pointStates[k].topJoint;
+                            if (!string.IsNullOrEmpty(jn))
+                            {
+                                if (!jointCounts.ContainsKey(jn)) jointCounts[jn] = 0;
+                                jointCounts[jn]++;
+                            }
+                        }
+
+                        int len = (segEndIdx - segStart + 1);
+                        float avgOffset = sumOffset / len;
+                        float avgDist = sumDist / len;
+
+                        string prominentJoint = "";
+                        int maxJc = 0;
+                        foreach (var kv in jointCounts)
+                        {
+                            if (kv.Value > maxJc)
+                            {
+                                maxJc = kv.Value;
+                                prominentJoint = kv.Key;
+                            }
+                        }
+
+                        string desc;
+                        string typeStr = pointStates[segStart].type;
+                        int sev = pointStates[segStart].severity;
+
+                        if (sev == 0)
+                        {
+                            desc = "Đúng nhịp và đúng tư thế chuẩn xác.";
+                        }
+                        else if (typeStr.Contains("nhịp"))
+                        {
+                            desc = $"{typeStr} khoảng {Mathf.Abs(avgOffset):F2}s so với giáo viên.";
+                        }
+                        else
+                        {
+                            string jointVn = TranslateJoint(prominentJoint);
+                            desc = $"Lệch góc tư thế ở {jointVn}, biên độ chưa đạt.";
+                        }
+
+                        segments.Add(new DtwDeviationSegment
+                        {
+                            startTime = startT,
+                            endTime = endT,
+                            deviationType = typeStr,
+                            timeOffsetSeconds = avgOffset,
+                            spatialDistance = avgDist,
+                            severity = sev,
+                            primaryJoint = prominentJoint,
+                            description = desc
+                        });
+                    }
+
+                    segStart = i;
+                }
+            }
+
+            return segments;
+        }
+
         private static float[] DictToFlatVector(Dictionary<string, Vector2> dict)
         {
             float[] vec = new float[DTW_JOINTS.Length * 2];

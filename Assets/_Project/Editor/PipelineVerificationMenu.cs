@@ -104,7 +104,7 @@ namespace DanceUp.Editor
             var frPass = pipeline.EvaluateFrame(0, 0f, studentPassMock, baseTeacher);
             var frFail = pipeline.EvaluateFrame(1, 0.033f, studentFailMock, baseTeacher);
 
-            if (frPass.isPass && frPass.frameScore >= 7.1f && !frFail.isPass && frFail.frameScore < 7.1f)
+            if (frPass.isPass && frPass.frameScore >= 8.1f && !frFail.isPass && frFail.frameScore < 8.1f)
             {
                 Debug.Log($"  [PASS] Khung hình Đạt: Điểm = {frPass.frameScore}/13 (PASS). Khung hình Lỗi: Điểm = {frFail.frameScore}/13 (FAIL).");
             }

@@ -82,6 +82,9 @@ namespace DanceUp.Features.Result
         public event Action<float, float> OnReviewSegmentClicked;
 
         private SessionEvaluationData currentData;
+        private GameObject verdictBadgeObj;
+        private TMP_Text txtVerdictBadge;
+        private Image imgVerdictBadgeBg;
 
 #if UNITY_EDITOR
         public void ConfigureReferences(
@@ -336,15 +339,22 @@ namespace DanceUp.Features.Result
                 txtSubtitle.text = string.IsNullOrEmpty(data.lessonTitle) ? "HIP HOP BASIC • ARM GROOVE" : data.lessonTitle;
             }
 
-            // 2. Card 1: Điểm tổng kết & Lời nhận xét
+            // 2. Card 1: Điểm tổng kết & Lời nhận xét & Kết luận ĐẠT CHUẨN / CHƯA ĐẠT
+            bool isPassed = data.isPassedStandard || (data.overallAccuracy >= (data.passStandardThreshold > 0 ? data.passStandardThreshold : 70f));
+            Color passColor = new Color(0.067f, 0.72f, 0.38f, 1f);
+            Color failColor = new Color(0.95f, 0.22f, 0.35f, 1f);
+
             if (imgAccuracyRing != null)
             {
                 imgAccuracyRing.fillAmount = Mathf.Clamp01(data.overallAccuracy / 100f);
+                imgAccuracyRing.color = isPassed ? passColor : failColor;
             }
             if (txtAccuracyPercent != null)
             {
                 txtAccuracyPercent.text = data.overallAccuracy.ToString("F0");
             }
+
+            UpdateVerdictBadge(isPassed, data.passStandardThreshold > 0 ? data.passStandardThreshold : 70f);
 
             // Option A: Cảnh báo nếu phiên tập quá ngắn
             if (data.isSessionTooShort)
@@ -697,6 +707,83 @@ namespace DanceUp.Features.Result
             t.raycastTarget = false;
             t.text = text;
             return t;
+        }
+
+        private void UpdateVerdictBadge(bool isPassed, float threshold)
+        {
+            if (verdictBadgeObj == null)
+            {
+                Transform cardOverall = transform.Find("ScrollView/Viewport/Content/Card_Overall") ??
+                                        transform.Find("ScrollView/Viewport/Content/Card_Score") ??
+                                        (txtCoachAdvice != null ? txtCoachAdvice.transform.parent : null);
+
+                if (cardOverall != null)
+                {
+                    var existing = cardOverall.Find("Badge_Verdict");
+                    if (existing != null)
+                    {
+                        verdictBadgeObj = existing.gameObject;
+                        imgVerdictBadgeBg = existing.GetComponent<Image>();
+                        txtVerdictBadge = existing.Find("Text")?.GetComponent<TMP_Text>();
+                    }
+                    else
+                    {
+                        verdictBadgeObj = new GameObject("Badge_Verdict", typeof(RectTransform), typeof(Image));
+                        verdictBadgeObj.transform.SetParent(cardOverall, false);
+                        var rt = verdictBadgeObj.GetComponent<RectTransform>();
+                        rt.anchorMin = new Vector2(1f, 1f);
+                        rt.anchorMax = new Vector2(1f, 1f);
+                        rt.pivot = new Vector2(1f, 1f);
+                        rt.anchoredPosition = new Vector2(-14f, -14f);
+                        rt.sizeDelta = new Vector2(138f, 24f);
+
+                        imgVerdictBadgeBg = verdictBadgeObj.GetComponent<Image>();
+                        if (imgAccuracyRing != null && imgAccuracyRing.sprite != null)
+                        {
+                            imgVerdictBadgeBg.sprite = imgAccuracyRing.sprite;
+                        }
+                        imgVerdictBadgeBg.raycastTarget = false;
+
+                        var txtObj = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+                        txtObj.transform.SetParent(verdictBadgeObj.transform, false);
+                        var trt = txtObj.GetComponent<RectTransform>();
+                        trt.anchorMin = Vector2.zero;
+                        trt.anchorMax = Vector2.one;
+                        trt.offsetMin = new Vector2(6f, 0f);
+                        trt.offsetMax = new Vector2(-6f, 0f);
+                        txtVerdictBadge = txtObj.GetComponent<TextMeshProUGUI>();
+                        if (txtAccuracyPercent != null && txtAccuracyPercent.font != null)
+                            txtVerdictBadge.font = txtAccuracyPercent.font;
+                        txtVerdictBadge.fontSize = 10.5f;
+                        txtVerdictBadge.fontStyle = FontStyles.Bold;
+                        txtVerdictBadge.alignment = TextAlignmentOptions.Center;
+                        txtVerdictBadge.enableWordWrapping = false;
+                        txtVerdictBadge.raycastTarget = false;
+                    }
+                }
+            }
+
+            if (verdictBadgeObj == null) return;
+            verdictBadgeObj.SetActive(true);
+
+            if (isPassed)
+            {
+                if (imgVerdictBadgeBg != null) imgVerdictBadgeBg.color = new Color(0.86f, 0.98f, 0.91f, 1f);
+                if (txtVerdictBadge != null)
+                {
+                    txtVerdictBadge.color = new Color(0.05f, 0.52f, 0.28f, 1f);
+                    txtVerdictBadge.text = $"✓ ĐẠT CHUẨN (≥{threshold:F0}%)";
+                }
+            }
+            else
+            {
+                if (imgVerdictBadgeBg != null) imgVerdictBadgeBg.color = new Color(1f, 0.90f, 0.91f, 1f);
+                if (txtVerdictBadge != null)
+                {
+                    txtVerdictBadge.color = new Color(0.75f, 0.14f, 0.22f, 1f);
+                    txtVerdictBadge.text = $"✕ CHƯA ĐẠT (<{threshold:F0}%)";
+                }
+            }
         }
 
         // Neo trên-trái, kéo giãn ngang (chừa rightInset bên phải cho nút)

@@ -80,7 +80,10 @@ namespace DanceUp.Data
         public List<DtwDeviationSegment> dtwDeviations = new List<DtwDeviationSegment>();
         public float dtwTimeDriftSeconds = 0f;
         public string analyzedVideoPath = "";
+        public string referenceVideoPath = "";
         public bool isImportedVideo = false;
+        public bool isPassedStandard = false;
+        public float passStandardThreshold = 70f;
 
         // List of all frame results
         public List<FrameEvaluationResult> frameResults = new List<FrameEvaluationResult>();

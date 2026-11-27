@@ -70,8 +70,17 @@ namespace DanceUp.AI
         }
 
         /// <summary>
+        /// Tính độ lệch chuẩn chuyển động tổng thể trên toàn bộ chuỗi khung hình để phát hiện video đứng yên / ảnh tĩnh.
+        /// </summary>
+        public float ComputeSequenceMotionStd(List<Dictionary<string, Vector2>> sequence)
+        {
+            if (sequence == null || sequence.Count < 5) return 0f;
+            return ComputeAverageKeyJointStd(sequence);
+        }
+
+        /// <summary>
         /// Phase 1: Lọc nhiễu động lượng (Noise Isolation / Momentum Filter).
-        /// Kiểm tra độ lệch chuẩn chuyển động của các khớp then chốt (cổ tay, cổ chân) >= 0.015.
+        /// Kiểm tra độ lệch chuẩn chuyển động của các khớp then chốt (cổ tay, cổ chân) >= 0.020.
         /// </summary>
         public bool CheckIsDancing(Dictionary<string, Vector2> currentRaw)
         {
@@ -80,6 +89,12 @@ namespace DanceUp.AI
             if (recentPosesWindow.Count > MOMENTUM_WINDOW_SIZE) recentPosesWindow.RemoveAt(0);
             if (recentPosesWindow.Count < 5) return true; // Đang tích lũy frame ban đầu
 
+            float avgStd = ComputeAverageKeyJointStd(recentPosesWindow);
+            return avgStd >= MOMENTUM_VARIANCE_THRESHOLD;
+        }
+
+        private static float ComputeAverageKeyJointStd(List<Dictionary<string, Vector2>> sequence)
+        {
             string[] keyJoints = { "left_wrist", "right_wrist", "left_ankle", "right_ankle" };
             float totalStd = 0f;
             int count = 0;
@@ -88,9 +103,9 @@ namespace DanceUp.AI
             {
                 float sumX = 0f, sumY = 0f;
                 int n = 0;
-                foreach (var pDict in recentPosesWindow)
+                foreach (var pDict in sequence)
                 {
-                    if (pDict.TryGetValue(j, out var pt))
+                    if (pDict != null && pDict.TryGetValue(j, out var pt))
                     {
                         sumX += pt.x;
                         sumY += pt.y;
@@ -102,9 +117,9 @@ namespace DanceUp.AI
                     float meanX = sumX / n;
                     float meanY = sumY / n;
                     float varX = 0f, varY = 0f;
-                    foreach (var pDict in recentPosesWindow)
+                    foreach (var pDict in sequence)
                     {
-                        if (pDict.TryGetValue(j, out var pt))
+                        if (pDict != null && pDict.TryGetValue(j, out var pt))
                         {
                             varX += (pt.x - meanX) * (pt.x - meanX);
                             varY += (pt.y - meanY) * (pt.y - meanY);
@@ -116,8 +131,7 @@ namespace DanceUp.AI
                 }
             }
 
-            float avgStd = count > 0 ? (totalStd / count) : 0f;
-            return avgStd >= MOMENTUM_VARIANCE_THRESHOLD;
+            return count > 0 ? (totalStd / count) : 0f;
         }
 
         /// <summary>

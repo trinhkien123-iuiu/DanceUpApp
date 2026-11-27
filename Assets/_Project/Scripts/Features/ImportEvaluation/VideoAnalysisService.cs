@@ -40,6 +40,19 @@ namespace DanceUp.Features.ImportEvaluation
 
         private DanceMLPipeline mlPipeline;
 
+        private class CachedReferenceData
+        {
+            public long fileStampTicks;
+            public float duration;
+            public float fps;
+            public List<Dictionary<string, Vector2>> frames;
+        }
+
+        private static readonly Dictionary<string, CachedReferenceData> referencePoseCache =
+            new Dictionary<string, CachedReferenceData>();
+
+        private const float PASS_STANDARD_THRESHOLD = 70f;
+
         private void Awake()
         {
             if (instance == null) instance = this;
@@ -74,7 +87,7 @@ namespace DanceUp.Features.ImportEvaluation
         }
 
         /// <summary>
-        /// Bắt đầu phân tích toàn diện một video bài nhảy có sẵn.
+        /// Bắt đầu phân tích toàn diện một video bài nhảy có sẵn (hỗ trợ cả video mẫu tùy chọn).
         /// </summary>
         public void StartVideoAnalysis(
             string videoPath,
@@ -82,40 +95,28 @@ namespace DanceUp.Features.ImportEvaluation
             string lessonTitle,
             Action<float, string> onProgress,
             Action<SessionEvaluationData> onComplete,
-            Action<string> onError)
+            Action<string> onError,
+            string referenceVideoPath = "")
         {
-            StartCoroutine(AnalyzeVideoRoutine(videoPath, referenceClip, lessonTitle, onProgress, onComplete, onError));
+            StartCoroutine(AnalyzeVideoRoutine(videoPath, referenceClip, lessonTitle, referenceVideoPath, onProgress, onComplete, onError));
         }
 
-        private IEnumerator AnalyzeVideoRoutine(
-            string videoPath,
-            VideoClip referenceClip,
-            string lessonTitle,
+        private IEnumerator RunPoseExtractorAsync(
+            string pyExe,
+            string scriptPath,
+            string targetVideoPath,
+            string outJsonPath,
+            float progStart,
+            float progEnd,
+            string stageLabel,
             Action<float, string> onProgress,
-            Action<SessionEvaluationData> onComplete,
-            Action<string> onError)
+            Action<bool, string> onResult)
         {
-            if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath))
-            {
-                onError?.Invoke("Tệp tin video không tồn tại hoặc đường dẫn không hợp lệ!");
-                yield break;
-            }
-
-            onProgress?.Invoke(0.05f, "Đang khởi tạo bộ phân tích MediaPipe AI...");
-            yield return null;
-
-            string scriptPath = Path.Combine(Application.dataPath, "_Project/Scripts/AI/pose_extractor.py");
-            string tempDir = Path.Combine(Application.temporaryCachePath, "DanceUpAnalysis");
-            Directory.CreateDirectory(tempDir);
-            string tempJson = Path.Combine(tempDir, "analyzed_pose_" + DateTime.Now.Ticks + ".json");
-
             bool pythonSuccess = false;
             float pythonProgress = 0f;
             string pythonError = "";
             bool isDone = false;
-            string pyExe = ResolvePythonExecutable();
 
-            // Chạy Python pose_extractor.py trong Background Thread
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -123,7 +124,7 @@ namespace DanceUp.Features.ImportEvaluation
                     var psi = new ProcessStartInfo
                     {
                         FileName = pyExe,
-                        Arguments = $"-u \"{scriptPath}\" --mode analyze_video --video \"{videoPath}\" --output-json \"{tempJson}\"",
+                        Arguments = $"-u \"{scriptPath}\" --mode analyze_video --video \"{targetVideoPath}\" --output-json \"{outJsonPath}\"",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
@@ -164,9 +165,9 @@ namespace DanceUp.Features.ImportEvaluation
                         process.Start();
                         process.BeginOutputReadLine();
                         process.BeginErrorReadLine();
-                        process.WaitForExit(90000); // 90 giây timeout
+                        process.WaitForExit(90000);
 
-                        if (process.ExitCode == 0 && File.Exists(tempJson))
+                        if (process.ExitCode == 0 && File.Exists(outJsonPath))
                         {
                             pythonSuccess = true;
                         }
@@ -183,36 +184,145 @@ namespace DanceUp.Features.ImportEvaluation
                 }
             });
 
-            // Vòng lặp chờ Python và cập nhật UI Progress
             while (!isDone)
             {
-                float mappedProgress = Mathf.Lerp(0.05f, 0.65f, pythonProgress);
-                string statusMsg = $"Trích xuất 13 khớp MediaPipe... ({Mathf.RoundToInt(pythonProgress * 100f)}%)";
+                float mappedProgress = Mathf.Lerp(progStart, progEnd, pythonProgress);
+                string statusMsg = $"{stageLabel} ({Mathf.RoundToInt(pythonProgress * 100f)}%)";
                 onProgress?.Invoke(mappedProgress, statusMsg);
                 yield return new WaitForSeconds(0.1f);
             }
 
-            if (!pythonSuccess || !File.Exists(tempJson))
+            onResult?.Invoke(pythonSuccess && File.Exists(outJsonPath), pythonError);
+        }
+
+        private IEnumerator AnalyzeVideoRoutine(
+            string videoPath,
+            VideoClip referenceClip,
+            string lessonTitle,
+            string referenceVideoPath,
+            Action<float, string> onProgress,
+            Action<SessionEvaluationData> onComplete,
+            Action<string> onError)
+        {
+            if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath))
             {
-                Debug.LogError("[VideoAnalysisService] Phân tích MediaPipe thất bại: " + pythonError);
-                onError?.Invoke("Không thể trích xuất khớp từ video: " + pythonError);
+                onError?.Invoke("Tệp tin video bài nhảy không tồn tại hoặc đường dẫn không hợp lệ!");
                 yield break;
             }
 
-            onProgress?.Invoke(0.70f, "Đang nạp dữ liệu động tác mẫu của giáo viên...");
-            yield return new WaitForSeconds(0.15f);
+            onProgress?.Invoke(0.05f, "Đang khởi tạo bộ phân tích MediaPipe AI...");
+            yield return null;
 
-            // 1. Nạp dữ liệu mẫu của giáo viên (Reference Teacher Poses)
-            float teacherDuration;
-            var teacherFrames = LoadTeacherReferenceData(referenceClip, out teacherDuration);
+            string scriptPath = Path.Combine(Application.dataPath, "_Project/Scripts/AI/pose_extractor.py");
+            string tempDir = Path.Combine(Application.temporaryCachePath, "DanceUpAnalysis");
+            Directory.CreateDirectory(tempDir);
+            string pyExe = ResolvePythonExecutable();
+
+            // 1. Nạp hoặc trích xuất dữ liệu động tác mẫu (Reference Teacher Poses)
+            float teacherDuration = 12.27f;
+            float teacherFps = 30f;
+            List<Dictionary<string, Vector2>> teacherFrames = null;
+            string effectiveRefPath = referenceVideoPath;
+
+            bool useCustomRefVideo = !string.IsNullOrEmpty(referenceVideoPath) && File.Exists(referenceVideoPath);
+            bool isDefaultBuiltinTeacher = useCustomRefVideo &&
+                Path.GetFileName(referenceVideoPath).Equals("1_teacher.mp4", StringComparison.OrdinalIgnoreCase);
+
+            float studentProgStart = 0.05f;
+            float studentProgEnd = 0.65f;
+
+            if (useCustomRefVideo && !isDefaultBuiltinTeacher)
+            {
+                string fullRefPath = Path.GetFullPath(referenceVideoPath);
+                long stamp = File.GetLastWriteTimeUtc(fullRefPath).Ticks;
+
+                if (referencePoseCache.TryGetValue(fullRefPath, out var cached) &&
+                    cached.fileStampTicks == stamp &&
+                    cached.frames != null && cached.frames.Count > 0)
+                {
+                    teacherFrames = cached.frames;
+                    teacherDuration = cached.duration;
+                    teacherFps = cached.fps;
+                    onProgress?.Invoke(0.25f, "Đã nạp dữ liệu pose video mẫu từ bộ nhớ đệm...");
+                    yield return null;
+                }
+                else
+                {
+                    string refJson = Path.Combine(tempDir, "ref_pose_" + DateTime.Now.Ticks + ".json");
+                    bool refOk = false;
+                    string refErr = "";
+
+                    yield return RunPoseExtractorAsync(
+                        pyExe, scriptPath, fullRefPath, refJson,
+                        0.05f, 0.35f, "Trích xuất 13 khớp video mẫu",
+                        onProgress, (ok, err) => { refOk = ok; refErr = err; });
+
+                    if (!refOk)
+                    {
+                        Debug.LogError("[VideoAnalysisService] Trích xuất video mẫu thất bại: " + refErr);
+                        onError?.Invoke("Không thể trích xuất khớp từ video mẫu: " + refErr);
+                        yield break;
+                    }
+
+                    var parsedRef = ParseStudentPoseJson(refJson, out teacherDuration, out teacherFps);
+                    InterpolateLowVisibility(parsedRef, 0.5f);
+
+                    teacherFrames = new List<Dictionary<string, Vector2>>(parsedRef.Count);
+                    foreach (var rf in parsedRef)
+                    {
+                        teacherFrames.Add(rf.joints);
+                    }
+
+                    if (teacherFrames.Count > 0)
+                    {
+                        referencePoseCache[fullRefPath] = new CachedReferenceData
+                        {
+                            fileStampTicks = stamp,
+                            duration = teacherDuration,
+                            fps = teacherFps,
+                            frames = teacherFrames
+                        };
+                    }
+
+                    studentProgStart = 0.35f;
+                    studentProgEnd = 0.72f;
+                }
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(effectiveRefPath))
+                {
+                    string defaultTeacherMp4 = Path.Combine(Application.dataPath, "_Project/Video/1_teacher.mp4");
+                    if (File.Exists(defaultTeacherMp4)) effectiveRefPath = defaultTeacherMp4;
+                }
+                teacherFrames = LoadTeacherReferenceData(referenceClip, out teacherDuration);
+            }
+
             if (teacherFrames == null || teacherFrames.Count == 0)
             {
                 onError?.Invoke("Không tìm thấy dữ liệu động tác mẫu của giáo viên!");
                 yield break;
             }
 
-            // 2. Phân tích JSON khớp của học viên từ video thực tế
-            onProgress?.Invoke(0.75f, "Đọc tọa độ khớp thực tế của bài nhảy...");
+            // 2. Trích xuất tọa độ khớp thực tế từ video bài nhảy học viên
+            string tempJson = Path.Combine(tempDir, "analyzed_pose_" + DateTime.Now.Ticks + ".json");
+            bool studentOk = false;
+            string studentErr = "";
+
+            yield return RunPoseExtractorAsync(
+                pyExe, scriptPath, videoPath, tempJson,
+                studentProgStart, studentProgEnd, "Trích xuất 13 khớp video bài nhảy",
+                onProgress, (ok, err) => { studentOk = ok; studentErr = err; });
+
+            if (!studentOk)
+            {
+                Debug.LogError("[VideoAnalysisService] Phân tích MediaPipe thất bại: " + studentErr);
+                onError?.Invoke("Không thể trích xuất khớp từ video: " + studentErr);
+                yield break;
+            }
+
+            // 3. Đọc JSON khớp của học viên từ video thực tế
+            onProgress?.Invoke(0.76f, "Đọc tọa độ khớp thực tế của bài nhảy...");
             yield return null;
 
             float sessionDuration, fps;
@@ -223,7 +333,7 @@ namespace DanceUp.Features.ImportEvaluation
                 yield break;
             }
 
-            // 3. Tiền xử lý (Nội suy các khớp có Visibility < 0.5) & Căn chỉnh DTW theo chuẩn processing_11_ver1
+            // 4. Tiền xử lý (Nội suy các khớp có Visibility < 0.5) & Căn chỉnh DTW theo chuẩn processing_11_ver1
             if (mlPipeline == null)
             {
                 mlPipeline = gameObject.AddComponent<DanceMLPipeline>();
@@ -235,8 +345,16 @@ namespace DanceUp.Features.ImportEvaluation
             InterpolateLowVisibility(studentFrames, 0.5f);
 
             var studentNormSeq = new List<Dictionary<string, Vector2>>(studentFrames.Count);
+            var studentRawSeq = new List<Dictionary<string, Vector2>>(studentFrames.Count);
             for (int i = 0; i < studentFrames.Count; i++)
+            {
+                studentRawSeq.Add(studentFrames[i].joints);
                 studentNormSeq.Add(mlPipeline.NormalizePose(studentFrames[i].joints));
+            }
+
+            // Kiểm tra video đứng yên / không có chuyển động vũ đạo thực tế
+            float sequenceMotionStd = mlPipeline.ComputeSequenceMotionStd(studentRawSeq);
+            bool isStaticVideo = sequenceMotionStd < 0.010f;
 
             var teacherNormSeq = new List<Dictionary<string, Vector2>>(teacherFrames.Count);
             for (int j = 0; j < teacherFrames.Count; j++)
@@ -271,6 +389,7 @@ namespace DanceUp.Features.ImportEvaluation
                     fr = new FrameEvaluationResult
                     {
                         frameIndex = i,
+                        teacherFrameIndex = tIdx,
                         timestamp = t,
                         maxScore = 13.0f,
                         frameScore = 0f,
@@ -294,6 +413,14 @@ namespace DanceUp.Features.ImportEvaluation
                 {
                     // Chấm điểm thực tế qua DanceMLPipeline (chuẩn hóa hình học & CatBoost classifier)
                     fr = mlPipeline.EvaluateFrame(i, t, sf.joints, teacherJoints);
+                    fr.teacherFrameIndex = tIdx;
+
+                    if (isStaticVideo)
+                    {
+                        fr.isPass = false;
+                        fr.frameScore = Mathf.Min(fr.frameScore, 4.0f);
+                    }
+
                     if (fr.isPass) passCount++;
 
                     foreach (var kvp in fr.joints)
@@ -310,21 +437,28 @@ namespace DanceUp.Features.ImportEvaluation
             }
 
             onProgress?.Invoke(0.92f, "Đối sánh căn chỉnh chuỗi động tác theo thời gian (DTW)...");
-            yield return new WaitForSeconds(0.2f);
+            yield return new WaitForSeconds(0.15f);
 
-            // 4. Chạy thuật toán Dynamic Time Warping (DTW) thực tế
-            var (dtwAcc, deviations, avgDrift) = DtwScorer.ComputeWithDeviations(frameResults, fps > 0f ? fps : 30f);
+            // 5. Chạy thuật toán DTW thực tế trực tiếp trên hai chuỗi đã chuẩn hóa (tránh chạy lặp trên chuỗi đã warp)
+            float actualStudentFps = fps > 0f ? fps : 30f;
+            float actualTeacherFps = teacherFps > 0f ? teacherFps : 30f;
+            var (dtwAcc, deviations, avgDrift) = DtwScorer.ComputeWithDeviationsFromSequences(
+                frameResults, studentNormSeq, teacherNormSeq, actualStudentFps, actualTeacherFps);
 
-            // 5. Tổng hợp dữ liệu kết quả thực tế theo chuẩn processing_11_ver1 (Frame Pass Rate với T* = 8.1)
+            // 6. Tổng hợp dữ liệu kết quả thực tế theo chuẩn processing_11_ver1 (Frame Pass Rate với T* = 8.1)
             float frameAcc = (frameResults.Count > 0) ? ((float)passCount / frameResults.Count * 100f) : 0f;
-            float overallScore = Mathf.Clamp(Mathf.Round(frameAcc), 5f, 100f);
+            float overallScore = isStaticVideo ? 5f : Mathf.Clamp(Mathf.Round(frameAcc), 5f, 100f);
+            bool passedStandard = !isStaticVideo && overallScore >= PASS_STANDARD_THRESHOLD;
 
             var sessionData = new SessionEvaluationData
             {
                 lessonTitle = string.IsNullOrEmpty(lessonTitle) ? "HIP HOP BASIC • ARM GROOVE" : lessonTitle,
-                sessionDuration = sessionDuration > 0f ? sessionDuration : (studentFrames.Count / (fps > 0 ? fps : 30f)),
+                sessionDuration = sessionDuration > 0f ? sessionDuration : (studentFrames.Count / actualStudentFps),
                 analyzedVideoPath = videoPath,
+                referenceVideoPath = effectiveRefPath ?? "",
                 isImportedVideo = true,
+                isPassedStandard = passedStandard,
+                passStandardThreshold = PASS_STANDARD_THRESHOLD,
                 frameByFrameAccuracy = Mathf.Round(frameAcc),
                 dtwAccuracy = Mathf.Round(dtwAcc),
                 overallAccuracy = overallScore,
@@ -336,31 +470,61 @@ namespace DanceUp.Features.ImportEvaluation
                 jointErrorCounts = errorCounts
             };
 
+            // Đổ các đoạn cần cải thiện từ DTW vào incorrectSections để nút "Xem lại đoạn lỗi" nhảy chính xác
+            if (deviations != null)
+            {
+                foreach (var dev in deviations)
+                {
+                    if (dev.severity >= 1)
+                    {
+                        sessionData.incorrectSections.Add(new IncorrectSectionInfo
+                        {
+                            startTime = dev.startTime,
+                            endTime = dev.endTime,
+                            primaryJointError = dev.primaryJoint,
+                            description = $"{dev.deviationType}: {dev.description}",
+                            avgScore = dev.severity == 2 ? 4f : 7f
+                        });
+                    }
+                }
+            }
+
+            // Tạo accuracyOverTime curve (lấy mẫu đều cho biểu đồ nếu có)
+            int curveStep = Mathf.Max(1, frameResults.Count / 25);
+            for (int i = 0; i < frameResults.Count; i += curveStep)
+            {
+                sessionData.accuracyOverTime.Add(new Vector2(frameResults[i].timestamp, frameResults[i].cumulativeAccuracy));
+            }
+
             // Top khớp sai lệch nhiều nhất
             var sortedErrors = new List<KeyValuePair<string, int>>(errorCounts);
             sortedErrors.Sort((a, b) => b.Value.CompareTo(a.Value));
             sessionData.topErrorJoints = sortedErrors;
 
-            // Nhận xét thực tế từ AI Coach dựa trên điểm số và khớp sai nhiều nhất
-            if (overallScore >= 88f)
+            // Nhận xét thực tế từ AI Coach dựa trên điểm số, chuyển động và khớp sai nhiều nhất
+            if (isStaticVideo)
             {
-                sessionData.coachAdvice = "Vũ đạo xuất sắc! Động tác chuẩn xác và vào nhịp rất đều.";
+                sessionData.coachAdvice = "Video hầu như không có chuyển động vũ đạo! Hãy tải lên video có động tác nhảy thực tế.";
             }
-            else if (overallScore >= 70f)
+            else if (overallScore >= 88f)
             {
-                if (Mathf.Abs(avgDrift) > 0.2f)
+                sessionData.coachAdvice = "Đạt chuẩn xuất sắc! Động tác chuẩn xác và vào nhịp rất đều.";
+            }
+            else if (overallScore >= PASS_STANDARD_THRESHOLD)
+            {
+                if (Mathf.Abs(avgDrift) > 0.25f)
                 {
-                    string dir = avgDrift > 0 ? "sớm" : "trễ";
-                    sessionData.coachAdvice = $"Khá tốt! Bạn có xu hướng đi {dir} nhịp {Mathf.Abs(avgDrift):F2}s ở các đoạn chuyển động.";
+                    string dir = avgDrift > 0 ? "trễ" : "sớm";
+                    sessionData.coachAdvice = $"Đạt chuẩn! Tuy nhiên bạn có xu hướng đi {dir} nhịp {Mathf.Abs(avgDrift):F2}s ở vài đoạn.";
                 }
                 else if (sortedErrors.Count > 0 && sortedErrors[0].Value > (frameResults.Count * 0.25f))
                 {
                     string jointVi = TranslateJoint(sortedErrors[0].Key);
-                    sessionData.coachAdvice = $"Khá tốt! Hãy chú ý mở góc {jointVi} chuẩn xác hơn theo huấn luyện viên.";
+                    sessionData.coachAdvice = $"Đạt chuẩn! Hãy chú ý mở góc {jointVi} chuẩn xác hơn để đạt điểm tối đa.";
                 }
                 else
                 {
-                    sessionData.coachAdvice = "Khá tốt! Giữ vững biên độ chuyển động và duy trì nhịp đều đặn.";
+                    sessionData.coachAdvice = "Đạt chuẩn! Giữ vững biên độ chuyển động và duy trì nhịp đều đặn.";
                 }
             }
             else if (overallScore >= 45f)
@@ -368,26 +532,26 @@ namespace DanceUp.Features.ImportEvaluation
                 if (sortedErrors.Count > 0)
                 {
                     string jointVi = TranslateJoint(sortedErrors[0].Key);
-                    sessionData.coachAdvice = $"Cần luyện tập thêm: Khớp {jointVi} sai lệch nhiều so với động tác mẫu.";
+                    sessionData.coachAdvice = $"Chưa đạt chuẩn: Khớp {jointVi} sai lệch nhiều so với video mẫu.";
                 }
                 else
                 {
-                    sessionData.coachAdvice = "Cần luyện tập thêm: Động tác chưa theo kịp biên độ và tiết tấu của bài nhảy.";
+                    sessionData.coachAdvice = "Chưa đạt chuẩn: Động tác chưa theo kịp biên độ và tiết tấu bài mẫu.";
                 }
             }
             else
             {
-                sessionData.coachAdvice = "Động tác sai lệch nhiều so với bài nhảy mẫu. Hãy xem lại video hướng dẫn và tập chậm từng nhịp!";
+                sessionData.coachAdvice = "Chưa đạt chuẩn: Động tác sai lệch nhiều so với bài nhảy mẫu. Hãy xem lại từng đoạn lỗi!";
             }
 
-            // 6. Tính 7 kỹ năng thực tế & PlayerPrefs persistence
+            // 7. Tính 7 kỹ năng thực tế & PlayerPrefs persistence
             DanceSessionManager.CalculateSevenSkills(sessionData, frameResults, errorCounts);
             DanceSessionManager.ApplyPlayerPrefsData(sessionData);
 
             onProgress?.Invoke(1.0f, "Hoàn tất phân tích!");
             yield return new WaitForSeconds(0.2f);
 
-            Debug.Log($"[VideoAnalysisService] Phân tích hoàn tất! Video: {Path.GetFileName(videoPath)}, Điểm tổng kết: {overallScore:F0}% (Khung: {frameAcc:F1}%, DTW: {dtwAcc:F1}%), Lệch nhịp: {avgDrift:F2}s");
+            Debug.Log($"[VideoAnalysisService] Phân tích hoàn tất! Ref: {(string.IsNullOrEmpty(effectiveRefPath) ? "default" : Path.GetFileName(effectiveRefPath))}, Student: {Path.GetFileName(videoPath)}, Verdict: {(passedStandard ? "ĐẠT CHUẨN" : "CHƯA ĐẠT")}, Điểm: {overallScore:F0}% (Khung: {frameAcc:F1}%, DTW: {dtwAcc:F1}%), Drift: {avgDrift:F2}s, MotionStd: {sequenceMotionStd:F4}");
             onComplete?.Invoke(sessionData);
         }
 
@@ -726,12 +890,12 @@ namespace DanceUp.Features.ImportEvaluation
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             string outVideoPath = Path.Combine(exportsDir, $"DanceUp_Analyzed_{timestamp}.mp4");
 
-            // Lưu analysis data ra JSON tạm thời
+            // Lưu analysis data ra JSON đầy đủ cả Dictionary khớp (JsonUtility không serialize được Dictionary!)
             string tempDir = Path.Combine(Application.temporaryCachePath, "DanceUpAnalysis");
             Directory.CreateDirectory(tempDir);
             string tempAnalysisJson = Path.Combine(tempDir, $"analysis_export_{timestamp}.json");
 
-            string serializedJson = JsonUtility.ToJson(sessionData);
+            string serializedJson = SerializeExportAnalysisJson(sessionData);
             File.WriteAllText(tempAnalysisJson, serializedJson, Encoding.UTF8);
 
             string scriptPath = Path.Combine(Application.dataPath, "_Project/Scripts/AI/pose_extractor.py");
@@ -825,6 +989,52 @@ namespace DanceUp.Features.ImportEvaluation
                 Debug.LogWarning("[VideoAnalysisService] Export failed: " + exportError);
                 onComplete?.Invoke(false, "Lỗi khi xuất video: " + exportError);
             }
+        }
+
+        private static string SerializeExportAnalysisJson(SessionEvaluationData data)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var sb = new StringBuilder(65536);
+            sb.Append("{\n");
+            sb.AppendFormat(inv, "  \"overallAccuracy\": {0:F1},\n", data != null ? data.overallAccuracy : 0f);
+            sb.AppendFormat("  \"isPassedStandard\": {0},\n", (data != null && data.isPassedStandard) ? "true" : "false");
+            sb.Append("  \"frames\": [\n");
+
+            var frames = data != null ? data.frameResults : null;
+            if (frames != null)
+            {
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    var fr = frames[i];
+                    sb.Append("    {\n");
+                    sb.AppendFormat(inv, "      \"frame_index\": {0},\n", fr.frameIndex);
+                    sb.AppendFormat(inv, "      \"timestamp\": {0:F4},\n", fr.timestamp);
+                    sb.AppendFormat(inv, "      \"frame_score\": {0:F2},\n", fr.frameScore);
+                    sb.AppendFormat("      \"is_pass\": {0},\n", fr.isPass ? "true" : "false");
+                    sb.Append("      \"student_joints\": {");
+
+                    if (fr.joints != null && fr.joints.Count > 0)
+                    {
+                        int jCount = 0;
+                        foreach (var kvp in fr.joints)
+                        {
+                            if (jCount > 0) sb.Append(",");
+                            sb.AppendFormat(inv,
+                                "\"{0}\":{{\"x\":{1:F4},\"y\":{2:F4},\"is_pass\":{3},\"joint_error\":{4:F4}}}",
+                                kvp.Key, kvp.Value.studentPos.x, kvp.Value.studentPos.y,
+                                kvp.Value.isPass, kvp.Value.jointError);
+                            jCount++;
+                        }
+                    }
+
+                    sb.Append("}\n    }");
+                    if (i < frames.Count - 1) sb.Append(",");
+                    sb.Append("\n");
+                }
+            }
+
+            sb.Append("  ]\n}");
+            return sb.ToString();
         }
 
         #endregion

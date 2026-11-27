@@ -265,6 +265,7 @@ def run_export_video(args):
             frame_map[f_idx] = f
 
     overall_acc = analysis_data.get("overallAccuracy", 84.0)
+    is_passed = analysis_data.get("isPassedStandard", overall_acc >= 70.0)
 
     cap = cv2.VideoCapture(args.video)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -290,15 +291,22 @@ def run_export_video(args):
         f_data = frame_map.get(frame_idx)
         student_joints = {}
         joints_eval = {}
+        failed_joint_names = []
+        frame_score = 0.0
+        frame_pass = True
 
         if f_data:
+            frame_score = float(f_data.get("frame_score", f_data.get("frameScore", 0.0)))
+            frame_pass = bool(f_data.get("is_pass", f_data.get("isPass", frame_score >= 8.1)))
             sj = f_data.get("student_joints") or f_data.get("joints") or {}
             for j_name, j_val in sj.items():
                 if isinstance(j_val, dict):
                     student_joints[j_name] = j_val
                     # Check pass/fail status
-                    is_pass = j_val.get("is_pass", j_val.get("isPass", 1))
+                    is_pass = int(j_val.get("is_pass", j_val.get("isPass", 1)))
                     joints_eval[j_name] = is_pass
+                    if is_pass == 0:
+                        failed_joint_names.append(j_name)
 
         # 1. Draw Skeleton Bones
         for j1, j2 in SKELETON_BONES:
@@ -335,23 +343,35 @@ def run_export_video(args):
             cv2.circle(frame, pt, radius + 2, (255, 255, 255), 1, cv2.LINE_AA)
 
         # 3. Draw Sleek Top HUD Banner
+        banner_h = 96 if failed_joint_names else 76
         hud_overlay = frame.copy()
-        cv2.rectangle(hud_overlay, (0, 0), (width, 70), (15, 20, 35), -1)
-        cv2.addWeighted(hud_overlay, 0.75, frame, 0.25, 0, frame)
+        cv2.rectangle(hud_overlay, (0, 0), (width, banner_h), (15, 20, 35), -1)
+        cv2.addWeighted(hud_overlay, 0.78, frame, 0.22, 0, frame)
 
         t_sec = frame_idx / fps
         time_str = f"{int(t_sec // 60):02d}:{int(t_sec % 60):02d}.{int((t_sec % 1) * 10)}"
 
         # HUD Texts
-        cv2.putText(frame, "DanceUp AI Coach", (20, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, color_cyan, 2, cv2.LINE_AA)
-        cv2.putText(frame, f"Time: {time_str} | Frame: {frame_idx}/{total_frames}", (20, 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA)
+        verdict_txt = "DAT CHUAN (PASS)" if is_passed else "CHUA DAT (FAIL)"
+        verdict_col = color_pass if is_passed else color_error
+        cv2.putText(frame, "DanceUp AI Coach", (16, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_cyan, 2, cv2.LINE_AA)
+        cv2.putText(frame, f"Time: {time_str} | Score: {frame_score:.0f}/13", (16, 54),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_pass if frame_pass else color_error, 1, cv2.LINE_AA)
 
-        # Accuracy Badge
-        badge_text = f"Accuracy: {overall_acc:.0f}%"
-        cv2.putText(frame, badge_text, (width - 220, 35),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_pass, 2, cv2.LINE_AA)
+        # Accuracy & Verdict Badge (Right aligned cleanly inside width)
+        badge_text = f"{overall_acc:.0f}% - {verdict_txt}"
+        text_size, _ = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+        badge_x = max(16, width - text_size[0] - 16)
+        cv2.putText(frame, badge_text, (badge_x, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.58, verdict_col, 2, cv2.LINE_AA)
+
+        if failed_joint_names:
+            err_preview = ", ".join(failed_joint_names[:3])
+            if len(failed_joint_names) > 3:
+                err_preview += f" (+{len(failed_joint_names) - 3})"
+            cv2.putText(frame, f"Loi khop: {err_preview}", (16, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, color_error, 1, cv2.LINE_AA)
 
         out.write(frame)
         frame_idx += 1
